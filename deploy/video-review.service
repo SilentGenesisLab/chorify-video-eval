@@ -1,0 +1,18 @@
+# systemd 服务：sudo cp deploy/video-review.service /etc/systemd/system/ && sudo systemctl enable --now video-review
+# 按实际情况修改 User、WorkingDirectory 和 node 路径
+[Unit]
+Description=视频评审台 (chorify-video-eval)
+After=network.target
+
+[Service]
+Type=simple
+User=donxu
+WorkingDirectory=/home/donxu/apps/chorify-video-eval/review-site
+EnvironmentFile=/home/donxu/apps/chorify-video-eval/review-site/.env.local
+Environment=NODE_ENV=production NODE_OPTIONS=--max-old-space-size=512
+ExecStart=/home/donxu/.local/node24/bin/node node_modules/next/dist/bin/next start -p 3100 -H 127.0.0.1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
