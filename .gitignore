@@ -1,0 +1,24 @@
+# 密钥与本地配置（只提交 *.sample）
+.env
+.env.*
+!.env.sample
+review-site/.env.local
+
+# 依赖与构建产物
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+review-site/.next/
+
+# 运行时数据：在线评审任务（含用户上传素材）、服务日志
+review-site/data/
+
+# 基准数据集的图片和视频：体积大（约 860MB），可用 build_dataset.py 重新生成
+benchmark/dataset/cases/**/*.png
+benchmark/dataset/cases/**/*.mp4
+samples/*.mp4
+
+# 本地日志
+*.log
+*.err
