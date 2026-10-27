@@ -285,23 +285,57 @@ def build_user_content(files, context, transcript, frames, platform_hint, tmpdir
 
 # ---------- 调用与聚合 ----------
 
+class call_slot:
+    """跨进程限流：同一台机器上所有评审任务合计最多 REVIEW_MAX_CALLS 个模型调用同时进行（默认 10）。
+    网站每个任务是独立进程、panel 模式一个任务又会并发多位评审员，接口网关按 Key 限制并发（约 15 个），不限会被 429。"""
+
+    def __enter__(self):
+        import fcntl
+        import random
+        n = max(1, int(env_value("REVIEW_MAX_CALLS") or 10))
+        locks = HERE / ".call-slots"
+        locks.mkdir(exist_ok=True)
+        while True:
+            for i in random.sample(range(n), n):
+                f = open(locks / f"slot{i}", "w")
+                try:
+                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    self.f = f
+                    return self
+                except OSError:
+                    f.close()
+            time.sleep(0.3 + random.random() * 0.5)
+
+    def __exit__(self, *exc):
+        self.f.close()  # 关闭即释放锁；进程异常退出时系统也会释放
+
+
 def call_model(key, model, system, content, effort, retries=3):
+    import random
     body = {"model": model, "temperature": 0.2, "max_tokens": 8000, "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}]}
     if effort:
         body["reasoning_effort"] = effort
-    for attempt in range(retries):
+    attempt = busy = 0
+    while attempt < retries:
         try:
             req = urllib.request.Request(api_url(), data=json.dumps(body).encode(),
                                          headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
-            resp = json.loads(urllib.request.urlopen(req, timeout=600).read())
+            with call_slot():
+                resp = json.loads(urllib.request.urlopen(req, timeout=600).read())
             text = resp["choices"][0]["message"]["content"]
             return json.JSONDecoder(strict=False).raw_decode(text[text.find("{"):])[0], resp.get("usage", {})
         except (urllib.error.URLError, json.JSONDecodeError, KeyError) as e:
             detail = e.read().decode()[:300] if isinstance(e, urllib.error.HTTPError) else e
             if isinstance(e, urllib.error.HTTPError) and (e.code in (401, 402) or "Insufficient Balance" in str(detail)):
                 raise RuntimeError(f"API 鉴权或余额问题，停止重试：{detail}")
-            print(f"  第 {attempt + 1} 次调用失败：{detail}", file=sys.stderr)
+            # 网关忙（429）不算失败次数，等一会儿再试，最多等约 5 分钟
+            if isinstance(e, urllib.error.HTTPError) and e.code == 429 and busy < 12:
+                busy += 1
+                time.sleep(min(60, 5 * busy) + random.random() * 5)
+                continue
+            attempt += 1
+            print(f"  第 {attempt} 次调用失败：{detail}", file=sys.stderr)
             time.sleep(2 ** attempt)
     raise RuntimeError("模型调用连续失败")
 

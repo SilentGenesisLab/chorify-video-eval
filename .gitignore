@@ -22,3 +22,4 @@ samples/*.mp4
 # 本地日志
 *.log
 *.err
+.call-slots/
