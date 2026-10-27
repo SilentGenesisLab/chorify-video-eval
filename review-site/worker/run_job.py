@@ -21,7 +21,7 @@ def main():
     status = json.loads((d / "status.json").read_text())
     try:
         ev = video_review.evaluate(job["stage"], job["files"], job.get("context") or None, job.get("transcript"),
-                                   runs=job.get("runs", 3), effort=job.get("effort", "high"), mode=job.get("mode", "sample"),
+                                   runs=job.get("runs", 3), effort=job.get("effort", "high"), mode=job.get("mode", "sample"), model=job.get("model") or None,
                                    platform_hint=job.get("platform_hint") or video_review.DEFAULT_PLATFORM_HINT)
         (d / "result.json").write_text(json.dumps(ev, ensure_ascii=False, indent=1))
         args = SimpleNamespace(files=job["files"], model=ev["model"], runs=job.get("runs", 3))

@@ -164,6 +164,7 @@ export function openapi(server) {
             transcript: { type: "string", description: "成片台词/字幕（模型听不到声音）" },
             platform_hint: { type: "string", description: "投放平台与规格，默认抖音/视频号竖屏 9:16" },
             runs: { type: "integer", enum: [1, 2, 3], default: 3, description: "采样次数（panel 模式下是每位评审员的采样次数）" },
+            model: { type: "string", description: "评审模型（评审接口上的模型名，如 claude-opus-5-5）；不传则用服务端默认 REVIEW_MODEL。服务端配置了 REVIEW_ALLOWED_MODELS 时只接受清单里的" },
             mode: { type: "string", enum: ["sample", "panel"], default: "sample", description: "sample：一位评审员按整套标准多次采样；panel：分维度评审团，各评审员只评自己负责的维度，合规评审员判红线，并发执行" },
             effort: { type: "string", enum: ["low", "high", "max"], default: "high" },
             title: { type: "string" },

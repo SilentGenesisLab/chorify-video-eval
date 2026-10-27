@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
-import { ROOT, SITE, STAGES } from "./data";
+import { ROOT, SITE, STAGES, reviewEnv } from "./data";
 import { ApiError, serializeReview } from "./api";
 
 // 在线评审任务：每个任务一个目录，状态落盘；进程内排队，同一时间只跑 MAX_RUNNING 个（每个约 100MB）
@@ -53,7 +53,7 @@ const safeName = (n, i) => {
 /**
  * 创建并排队一个评审任务。网页表单与 API 共用。
  * input: { stage, files:[{name, data:Buffer}], context:[{name,data}], content, context_text, transcript,
- *          runs, mode, effort, platform_hint, title, callback_url }
+ *          runs, mode, model, effort, platform_hint, title, callback_url }
  */
 export function createReview(input) {
   recover();
@@ -80,6 +80,11 @@ export function createReview(input) {
   if (![1, 2, 3].includes(runs)) throw new ApiError(400, "invalid_runs", "runs 必须是 1、2 或 3");
   const mode = input.mode || "sample";
   if (!["sample", "panel"].includes(mode)) throw new ApiError(400, "invalid_mode", "mode 必须是 sample 或 panel");
+  // 评审模型由调用方指定（不传则用评审器默认的 REVIEW_MODEL）；配置了 REVIEW_ALLOWED_MODELS 时只接受清单里的
+  const model = (input.model || "").trim() || null;
+  if (model && !/^[A-Za-z0-9._:\/-]{1,80}$/.test(model)) throw new ApiError(400, "invalid_model", "model 只能包含字母、数字和 . _ : / -");
+  const allowed = (reviewEnv("REVIEW_ALLOWED_MODELS") || "").split(",").map((x) => x.trim()).filter(Boolean);
+  if (model && allowed.length && !allowed.includes(model)) throw new ApiError(400, "invalid_model", `model 必须是以下之一：${allowed.join(", ")}`);
   const effort = input.effort || "high";
   if (!["low", "high", "max"].includes(effort)) throw new ApiError(400, "invalid_effort", "effort 必须是 low / high / max");
   const cb = (input.callback_url || "").trim();
@@ -119,7 +124,7 @@ export function createReview(input) {
     }
   }
   const job = {
-    stage, files: filePaths, context: ctxPaths, transcript: transcriptPath, runs, mode, effort,
+    stage, files: filePaths, context: ctxPaths, transcript: transcriptPath, runs, mode, model, effort,
     platform_hint: (input.platform_hint || "").trim() || null,
     title: (input.title || "").trim().slice(0, 80) || files[0]?.name || "文本内容",
     callback_url: cb || null,
