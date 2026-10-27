@@ -336,8 +336,8 @@ def call_model(key, model, system, content, effort, retries=3):
                 if bad:
                     body.pop(bad)
                     continue
-            # 网关忙不算失败次数，等一会儿再试，最多等约 5 分钟：429 并发超限；5xx「All available accounts exhausted」是网关上游账号暂时用尽
-            if isinstance(e, urllib.error.HTTPError) and (e.code == 429 or (e.code >= 500 and "exhausted" in str(detail))) and busy < 12:
+            # 网关忙不算失败次数，等一会儿再试，最多等约 5 分钟：429 并发超限；「All available accounts exhausted」是网关上游账号暂时用尽
+            if isinstance(e, urllib.error.HTTPError) and (e.code == 429 or "accounts exhausted" in str(detail)) and busy < 12:
                 busy += 1
                 time.sleep(min(60, 5 * busy) + random.random() * 5)
                 continue
