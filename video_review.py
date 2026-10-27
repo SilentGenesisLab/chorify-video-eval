@@ -19,6 +19,7 @@
 """
 import argparse
 import base64
+import http.client
 import json
 import mimetypes
 import os
@@ -325,7 +326,7 @@ def call_model(key, model, system, content, effort, retries=3):
                 resp = json.loads(urllib.request.urlopen(req, timeout=600).read())
             text = resp["choices"][0]["message"]["content"]
             return json.JSONDecoder(strict=False).raw_decode(text[text.find("{"):])[0], resp.get("usage", {})
-        except (urllib.error.URLError, json.JSONDecodeError, KeyError) as e:
+        except (urllib.error.URLError, http.client.HTTPException, ConnectionError, TimeoutError, json.JSONDecodeError, KeyError) as e:
             detail = e.read().decode()[:300] if isinstance(e, urllib.error.HTTPError) else e
             if isinstance(e, urllib.error.HTTPError) and (e.code in (401, 402) or "Insufficient Balance" in str(detail)):
                 raise RuntimeError(f"API 鉴权或余额问题，停止重试：{detail}")
