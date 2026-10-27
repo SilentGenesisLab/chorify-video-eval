@@ -330,6 +330,12 @@ def call_model(key, model, system, content, effort, retries=3):
             detail = e.read().decode()[:300] if isinstance(e, urllib.error.HTTPError) else e
             if isinstance(e, urllib.error.HTTPError) and (e.code in (401, 402) or "Insufficient Balance" in str(detail)):
                 raise RuntimeError(f"API 鉴权或余额问题，停止重试：{detail}")
+            # 有的模型不接受某些可选参数（如 claude-sonnet-5-5 不允许改 temperature）：去掉被点名的参数再试，不计失败次数
+            if isinstance(e, urllib.error.HTTPError) and e.code == 400:
+                bad = next((k for k in ("temperature", "reasoning_effort", "response_format") if k in body and k in str(detail)), None)
+                if bad:
+                    body.pop(bad)
+                    continue
             # 网关忙（429）不算失败次数，等一会儿再试，最多等约 5 分钟
             if isinstance(e, urllib.error.HTTPError) and e.code == 429 and busy < 12:
                 busy += 1
