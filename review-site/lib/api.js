@@ -94,7 +94,7 @@ export async function readReviewInput(req) {
     const s = (k) => (form.get(k) ?? "").toString();
     return {
       stage: s("stage"), files: await files("files"), context: await files("context"), content: s("content"), context_text: s("context_text"),
-      transcript: s("transcript"), runs: s("runs"), effort: s("effort") || undefined, platform_hint: s("platform_hint"),
+      transcript: s("transcript"), runs: s("runs"), mode: s("mode") || undefined, effort: s("effort") || undefined, platform_hint: s("platform_hint"),
       title: s("title"), callback_url: s("callback_url"), wait: s("wait"),
     };
   }
@@ -108,7 +108,7 @@ export async function readReviewInput(req) {
     return {
       stage: b.stage, files: await jsonFiles(b.files, "files"), context: await jsonFiles(b.context_files, "context_files"),
       content: joinText(b.content), context_text: joinText(b.context), transcript: joinText(b.transcript),
-      runs: b.runs, effort: b.effort, platform_hint: b.platform_hint, title: b.title, callback_url: b.callback_url, wait: b.wait,
+      runs: b.runs, mode: b.mode, effort: b.effort, platform_hint: b.platform_hint, title: b.title, callback_url: b.callback_url, wait: b.wait,
     };
   }
   throw new ApiError(415, "unsupported_media_type", "Content-Type 需为 application/json 或 multipart/form-data");
@@ -121,10 +121,10 @@ export function serializeResult(ev, { raw = false } = {}) {
   const r = ev.result;
   return {
     verdict: r.verdict, total: r.total, min_dimension: r.min_dimension, needs_human_review: r.needs_human_review,
-    summary: r.summary, top_fixes: r.top_fixes, highlights: r.highlights,
+    summary: r.summary, top_fixes: r.top_fixes, highlights: r.highlights, panels: r.panels || null,
     redlines: r.redlines.map((x) => ({ id: x.id, text: x.text, status: x.status, hits: x.hits, evidence: x.evidence })),
     dimensions: r.dimensions.map((d) => ({ id: d.id, name: d.name, weight: d.weight, score: d.mean, scores: d.scores, spread: d.spread, evidence: d.evidence, issues: d.issues, suggestions: d.suggestions })),
-    tech: ev.tech || null, usage: ev.usage || null,
+    tech: ev.tech || null, usage: ev.usage || null, model: ev.model || null, mode: ev.mode || "sample",
     ...(raw ? { raw_runs: ev.raw_runs } : {}),
   };
 }
@@ -138,7 +138,7 @@ export function serializeReview(j, base = baseUrl(), opts = {}) {
     queue_position: st.state === "queued" ? st.position : null,
     created_at: iso(st.created), started_at: iso(st.started), finished_at: iso(st.finished),
     elapsed_seconds: st.started ? Math.round(((st.finished || Date.now()) - st.started) / 1000) : null,
-    params: { runs: j.job.runs, effort: j.job.effort, platform_hint: j.job.platform_hint, callback_url: j.job.callback_url },
+    params: { runs: j.job.runs, mode: j.job.mode || "sample", effort: j.job.effort, platform_hint: j.job.platform_hint, callback_url: j.job.callback_url },
     inputs: { files: j.job.files.map(f), context: j.job.context.map(f), transcript: j.job.transcript ? f(j.job.transcript) : null },
     result: serializeResult(j.result, opts),
     links: {

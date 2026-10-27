@@ -1,5 +1,5 @@
 import path from "node:path";
-import { BENCH, readText, rubric } from "@/lib/data";
+import { BENCH, readText, reviewModel, rubric } from "@/lib/data";
 import EvaluateForm from "./form";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +18,7 @@ export default function Page() {
   return (
     <main className="wrap narrow">
       <div className="head">
-        <span className="eyebrow">deepseek-flash · 结果约 1–3 分钟</span>
+        <span className="eyebrow">{reviewModel()} · 结果约 1–3 分钟</span>
         <h1>在线评审</h1>
         <p className="lede">选择关卡，上传或粘贴待评审材料，附上前序关卡的参考材料（brief、创意、分镜、品牌规范），评审器会对照还原度打分。默认每份材料独立评 3 次取均值，分歧大的项会提示人工复核。</p>
       </div>

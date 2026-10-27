@@ -70,7 +70,7 @@ HTTP/1.1 401
 | 400 | `missing_video` | 成片评审没有视频文件 |
 | 400 | `unexpected_video` | 视频文件提交到了非 video 关卡 |
 | 400 | `unsupported_file` | 文件扩展名不支持 |
-| 400 | `invalid_runs` / `invalid_effort` / `invalid_callback_url` | 参数取值错误 |
+| 400 | `invalid_runs` / `invalid_mode` / `invalid_effort` / `invalid_callback_url` | 参数取值错误 |
 | 400 | `invalid_body` | JSON 格式错误或字段类型不对 |
 | 400 | `file_download_failed` | 按 url 下载文件失败 |
 | 400 | `invalid_name` / `invalid_split` / `invalid_workers` / `no_cases` | 基准测试参数错误 |
@@ -164,7 +164,8 @@ POST /api/v1/reviews            （stage 写在请求体）
 | `context_files` | FileRef[] | 否 | 参考材料文件 |
 | `transcript` | string | 否 | 成片的台词或字幕。模型听不到声音，口播内容请写在这里 |
 | `platform_hint` | string | 否 | 投放平台与规格。默认“短视频信息流（抖音/视频号），竖屏 9:16 1080x1920，响度 -14～-16 LUFS，真峰值 ≤ -1 dBTP” |
-| `runs` | integer | 否 | 采样次数，取 1–3，默认 3。多次采样时维度分取均值，红线按多数票判定 |
+| `runs` | integer | 否 | 采样次数，取 1–3，默认 3。多次采样时维度分取均值，红线按多数票判定。`panel` 模式下是每位评审员的采样次数 |
+| `mode` | string | 否 | `sample`（默认）：一位评审员按整套标准评 `runs` 次。`panel`：分维度评审团，`rubrics.json` 里该关卡的每位评审员只评自己负责的维度，另有一位合规评审员只判红线，彼此看不到对方的结论，并发执行；结果里多一个 `panels` 字段列出编制。结论计算规则两种模式相同 |
 | `effort` | string | 否 | 推理强度：`low` / `high` / `max`，默认 `high` |
 | `title` | string | 否 | 任务名称，最长 80 字 |
 | `callback_url` | string | 否 | 任务完成或失败后，服务端向该地址 POST 任务对象 |
@@ -191,7 +192,7 @@ POST /api/v1/reviews            （stage 写在请求体）
 | `context` | 参考材料文件，可重复多次 |
 | `content` | 待评审文本 |
 | `context_text` | 参考材料文本 |
-| `transcript`、`platform_hint`、`runs`、`effort`、`title`、`callback_url`、`wait` | 同 JSON |
+| `transcript`、`platform_hint`、`runs`、`mode`、`effort`、`title`、`callback_url`、`wait` | 同 JSON |
 | `stage` | 仅 `POST /reviews` 时需要 |
 
 #### 示例：分镜评审（JSON）

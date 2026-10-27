@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""视频全链路评审：用 deepseek-flash 按 rubrics.json 对创意 / 分镜 / 资产 / 成片打分。
+"""视频全链路评审：按 rubrics.json 对创意 / 分镜 / 资产 / 成片打分（默认 deepseek-flash，可换任意 OpenAI 兼容接口的模型）。
 
 用法：
   python video_review.py creative  brief.md proposal.md
@@ -7,7 +7,15 @@
   python video_review.py asset     assets/*.png asset_list.md
   python video_review.py video     final.mp4 --context storyboard.md --transcript subs.srt
 
-API Key 从环境变量 DEEPSEEK_API_KEY 或同目录 .env 读取。
+接口配置从环境变量或同目录 .env 读取：
+  REVIEW_API_URL  chat/completions 地址，默认 DeepSeek 官方
+  REVIEW_API_KEY  接口 Key，未设置时用 DEEPSEEK_API_KEY
+  REVIEW_MODEL    默认模型，未设置时为 deepseek-flash
+
+两种评审方式（--mode）：
+  sample  同一个评审员按整套标准评 runs 次，维度取均值、红线多数票（原有方式，基准测试用这个）
+  panel   分维度评审团：rubrics.json 里每个关卡的 panels 各派一个评审员，各自只看自己负责的维度，
+          另有合规评审员只判红线；评审员上下文互不相通、并发执行，结论仍由程序按规则计算
 """
 import argparse
 import base64
@@ -27,21 +35,36 @@ from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-API_URL = "https://api.deepseek.com/chat/completions"
+DEFAULT_API_URL = "https://api.deepseek.com/chat/completions"
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi"}
 
 
-def load_api_key():
-    key = os.environ.get("DEEPSEEK_API_KEY")
+def env_value(name):
+    """环境变量优先，其次同目录 .env。"""
+    if os.environ.get(name):
+        return os.environ[name]
     env = HERE / ".env"
-    if not key and env.exists():
+    if env.exists():
         for line in env.read_text().splitlines():
-            if line.startswith("DEEPSEEK_API_KEY="):
-                key = line.split("=", 1)[1].strip()
+            if line.startswith(f"{name}="):
+                return line.split("=", 1)[1].strip() or None
+    return None
+
+
+def load_api_key():
+    key = env_value("REVIEW_API_KEY") or env_value("DEEPSEEK_API_KEY")
     if not key:
-        sys.exit("缺少 DEEPSEEK_API_KEY（环境变量或 .env）")
+        sys.exit("缺少 REVIEW_API_KEY / DEEPSEEK_API_KEY（环境变量或 .env）")
     return key
+
+
+def api_url():
+    return env_value("REVIEW_API_URL") or DEFAULT_API_URL
+
+
+def default_model():
+    return env_value("REVIEW_MODEL") or "deepseek-flash"
 
 
 def ffmpeg_exe():
@@ -110,8 +133,11 @@ def extract_frames(path, duration, n, outdir):
 
 # ---------- Prompt ----------
 
-def build_system_prompt(stage, rubric):
+def build_system_prompt(stage, rubric, panel=None):
+    """panel 为空时评整套标准；否则只评 panel["dimensions"]，panel["redlines"] 为真时才判红线。"""
     s = rubric["stages"][stage]
+    if panel:
+        return build_panel_prompt(stage, rubric, panel)
     dims = "\n".join(
         f"- {d['id']} {d['name']}（权重 {int(d['weight'] * 100)}%）：{d['criteria']}\n"
         f"    5 分样子：{d['anchor_5']}；2 分样子：{d['anchor_2']}"
@@ -133,11 +159,12 @@ def build_system_prompt(stage, rubric):
 
 ## 评审要求
 1. 严格对照维度定义与锚点打分，不要因为材料篇幅长或文笔好而加分；分数要拉开，确有问题就给 2 分或 1 分，确实出色才给 5 分。
-2. 每个维度必须先写 evidence：引用材料中的具体内容（镜号、时间码、原文片段、画面描述），再给分。材料中没有相关信息时，evidence 写明"材料未提供"，按缺失程度扣分。
+2. 每个维度必须先写 evidence：引用材料中的具体内容（镜号、时间码、原文片段、画面描述），再给分。材料中没有相关信息时，evidence 写明「材料未提供」，按缺失程度扣分。
 3. issues 与 suggestions 要可执行：指出位置 + 问题 + 具体改法。
 4. 红线逐条判断：仅在有明确证据时 hit=true；有疑虑但证据不足时 hit=false 并在 evidence 中说明疑点。
-5. 你看不到视频动态和听不到声音时，基于给出的技术参数、关键帧和文本推断，并在 evidence 中注明"推断"。
+5. 你看不到视频动态和听不到声音时，基于给出的技术参数、关键帧和文本推断，并在 evidence 中注明「推断」。
 6. 不要计算总分，总分与结论由程序计算。
+7. JSON 字符串里引用原文请用「」，不要用英文双引号。
 
 ## 输出格式
 只输出一个 JSON 对象，不要输出其他文字：
@@ -153,6 +180,56 @@ def build_system_prompt(stage, rubric):
   "summary": "100 字以内的总体评价"
 }}
 dimensions 必须且只能包含：{ids}；redlines 必须覆盖 R1–R{len(s['redlines'])}。"""
+
+
+def build_panel_prompt(stage, rubric, panel):
+    s = rubric["stages"][stage]
+    mine = [d for d in s["dimensions"] if d["id"] in panel.get("dimensions", [])]
+    scale = "\n".join(f"  {k} 分 = {v}" for k, v in sorted(rubric["scale"].items(), reverse=True))
+    parts = [f"""你是评审团中的「{panel['name']}」评审员：{panel['role']}
+你正在参与【{s['name']}】。评审对象：{s['input_hint']}。
+评审团里其他评审员负责其他方面，你只对自己负责的部分下结论，不要评价职责以外的内容。"""]
+    if mine:
+        dims = "\n".join(
+            f"- {d['id']} {d['name']}：{d['criteria']}\n    5 分样子：{d['anchor_5']}；2 分样子：{d['anchor_2']}" for d in mine)
+        parts.append(f"## 评分刻度（整数）\n{scale}\n\n## 你负责的维度\n{dims}")
+    if panel.get("redlines"):
+        reds = "\n".join(f"- R{i + 1}：{r}" for i, r in enumerate(s["redlines"]))
+        parts.append(f"## 红线（一票否决，你负责逐条判断）\n{reds}")
+    parts.append("""## 评审要求
+1. 先写 evidence：引用材料中的具体内容（镜号、时间码、原文片段、画面描述），再下结论；材料里没有就写「材料未提供」。
+2. 分数要拉开：确有问题就给 2 分或 1 分，确实出色才给 5 分；不要因为篇幅长或文笔好而加分。
+3. issues 与 suggestions 要可执行：位置 + 问题 + 具体改法。
+4. 红线仅在有明确证据时 hit=true；有疑虑但证据不足时 hit=false，并在 evidence 中说明疑点。
+5. 看不到视频动态、听不到声音时，依据技术参数、关键帧和文本推断，并在 evidence 中注明「推断」。
+6. 参考材料里有产品原图时，凡涉及产品的判断都要拿画面与原图逐项比对（外形、颜色、包装文字、Logo、用法）。
+7. JSON 字符串里引用原文请用「」，不要用英文双引号。""")
+    dim_ids = ", ".join(d["id"] for d in mine) or "（无，输出空数组）"
+    red_rule = f"redlines 必须覆盖 R1–R{len(s['redlines'])}" if panel.get("redlines") else "redlines 输出空数组"
+    parts.append(f"""## 输出格式
+只输出一个 JSON 对象：
+{{{{
+  "dimensions": [{{{{"id": "维度ID", "evidence": "具体证据", "score": 1-5 的整数, "issues": ["问题"], "suggestions": ["改法"]}}}}],
+  "redlines": [{{{{"id": "R1", "hit": true/false, "evidence": "证据或疑点"}}}}],
+  "highlights": ["你负责范围内做得好的地方"],
+  "top_fixes": ["你负责范围内最重要的修改建议，最多 3 条"],
+  "summary": "50 字以内"
+}}}}
+dimensions 必须且只能包含：{dim_ids}；{red_rule}。""".replace("{{", "{").replace("}}", "}"))
+    return "\n\n".join(parts)
+
+
+def stage_panels(stage, rubric):
+    """评审团编制：rubrics.json 里配置了 panels 就用它；否则每个维度一位评审员，外加一位合规评审员。"""
+    s = rubric["stages"][stage]
+    panels = s.get("panels") or [
+        *({"id": d["id"], "name": d["name"], "role": f"只评「{d['name']}」。", "dimensions": [d["id"]]} for d in s["dimensions"]),
+        {"id": "compliance", "name": "合规", "role": "只判断红线。", "dimensions": [], "redlines": True}]
+    covered = {i for p in panels for i in p.get("dimensions", [])}
+    missing = [d["id"] for d in s["dimensions"] if d["id"] not in covered]
+    if missing or not any(p.get("redlines") for p in panels):
+        raise ValueError(f"{stage} 的 panels 配置不完整：未覆盖维度 {missing} 或没有负责红线的评审员")
+    return panels
 
 
 def file_to_text_block(path):
@@ -179,6 +256,10 @@ def build_user_content(files, context, transcript, frames, platform_hint, tmpdir
     content = [{"type": "text", "text": "以下是待评审材料。"}]
     tech = None
     for c in context or []:
+        if Path(c).suffix.lower() in IMAGE_EXT:
+            content.append({"type": "text", "text": f"\n【参考图片：{Path(c).name}（如产品原图、品牌规范），用于比对一致性】"})
+            content.append(image_block(c))
+            continue
         content.append({"type": "text", "text": "\n【参考材料：前序关卡已通过的内容，用于对照还原度】"})
         content.append(file_to_text_block(c))
     for f in files:
@@ -205,13 +286,13 @@ def build_user_content(files, context, transcript, frames, platform_hint, tmpdir
 # ---------- 调用与聚合 ----------
 
 def call_model(key, model, system, content, effort, retries=3):
-    body = {"model": model, "temperature": 0.2, "response_format": {"type": "json_object"},
+    body = {"model": model, "temperature": 0.2, "max_tokens": 8000, "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}]}
     if effort:
         body["reasoning_effort"] = effort
     for attempt in range(retries):
         try:
-            req = urllib.request.Request(API_URL, data=json.dumps(body).encode(),
+            req = urllib.request.Request(api_url(), data=json.dumps(body).encode(),
                                          headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
             resp = json.loads(urllib.request.urlopen(req, timeout=600).read())
             text = resp["choices"][0]["message"]["content"]
@@ -269,7 +350,7 @@ def aggregate(stage, rubric, runs):
 def render_markdown(result, tech, args, usage):
     L = [f"# {result['stage']}报告", "",
          f"- 评审对象：{', '.join(Path(f).name for f in args.files)}",
-         f"- 模型：{args.model} × {args.runs} 次采样 · {datetime.now():%Y-%m-%d %H:%M}",
+         f"- 模型：{args.model} × {args.runs} 次采样" + ("（分维度评审团：" + "、".join(p["name"] for p in result["panels"]) + "）" if result.get("panels") else "") + f" · {datetime.now():%Y-%m-%d %H:%M}",
          f"- **结论：{result['verdict']}** · 加权总分 **{result['total']}** / 5 · 最低维度 {result['min_dimension']}"]
     if result["needs_human_review"]:
         L.append(f"- ⚠ 需人工复核：{', '.join(result['needs_human_review'])}（多次采样分歧 ≥ 2 分或疑似红线）")
@@ -295,39 +376,71 @@ def render_markdown(result, tech, args, usage):
 DEFAULT_PLATFORM_HINT = "短视频信息流（抖音/视频号），竖屏 9:16 1080x1920，响度参考 -14～-16 LUFS，真峰值 ≤ -1 dBTP"
 
 
-def evaluate(stage, files, context=None, transcript=None, runs=3, model="deepseek-flash", effort="high",
-             frames=12, platform_hint=DEFAULT_PLATFORM_HINT, rubric_path=HERE / "rubrics.json", key=None):
-    """供批量调用：返回 {result, tech, raw_runs, usage}。"""
+def merge_panels(outs):
+    """把同一轮里各评审员的输出拼成一份完整评审（维度、红线各取负责人的）。"""
+    merged = {"dimensions": [], "redlines": [], "highlights": [], "top_fixes": [], "summary": ""}
+    notes = []
+    for panel, o in outs:
+        merged["dimensions"] += [d for d in o.get("dimensions", []) if d.get("id") in panel.get("dimensions", [])]
+        if panel.get("redlines"):
+            merged["redlines"] += o.get("redlines", [])
+        merged["highlights"] += o.get("highlights", [])[:2]
+        # 合规问题排在最前：红线不改，其余修改都没有意义
+        fixes = o.get("top_fixes", [])[:2]
+        merged["top_fixes"] = fixes + merged["top_fixes"] if panel.get("redlines") else merged["top_fixes"] + fixes
+        if o.get("summary"):
+            notes.append(f"【{panel['name']}】{o['summary']}")
+    merged["summary"] = " ".join(notes)
+    return merged
+
+
+def evaluate(stage, files, context=None, transcript=None, runs=3, model=None, effort="high",
+             frames=12, platform_hint=DEFAULT_PLATFORM_HINT, rubric_path=HERE / "rubrics.json", key=None, mode="sample"):
+    """供批量调用：返回 {result, tech, raw_runs, usage, model, mode}。"""
     key = key or load_api_key()
+    model = model or default_model()
     rubric = json.loads(Path(rubric_path).read_text())
-    system = build_system_prompt(stage, rubric)
+    if mode == "panel":
+        panels = stage_panels(stage, rubric)
+        calls = [(r, p, build_system_prompt(stage, rubric, p)) for r in range(runs) for p in panels]
+    else:
+        calls = [(r, None, build_system_prompt(stage, rubric)) for r in range(runs)]
     with tempfile.TemporaryDirectory() as tmp:
         content, tech = build_user_content(files, context, transcript, frames, platform_hint, tmp)
-        with ThreadPoolExecutor(runs) as pool:
-            outs = list(pool.map(lambda _: call_model(key, model, system, content, effort), range(runs)))
-    raw = [o[0] for o in outs]
+        with ThreadPoolExecutor(min(len(calls), 12)) as pool:
+            outs = list(pool.map(lambda c: call_model(key, model, c[2], content, effort), calls))
     usage = {k: sum(o[1].get(k, 0) for o in outs) for k in ("prompt_tokens", "completion_tokens")}
-    return {"result": aggregate(stage, rubric, raw), "tech": tech, "raw_runs": raw, "usage": usage}
+    if mode == "panel":
+        raw = [merge_panels([(c[1], o[0]) for c, o in zip(calls, outs) if c[0] == r]) for r in range(runs)]
+    else:
+        raw = [o[0] for o in outs]
+    result = aggregate(stage, rubric, raw)
+    if mode == "panel":
+        result["panels"] = [{"id": p["id"], "name": p["name"], "dimensions": p.get("dimensions", []), "redlines": bool(p.get("redlines"))}
+                            for p in panels]
+    return {"result": result, "tech": tech, "raw_runs": raw, "usage": usage, "model": model, "mode": mode}
 
 
 def main():
-    ap = argparse.ArgumentParser(description="视频全链路 LLM 评审（deepseek-flash）")
+    ap = argparse.ArgumentParser(description="视频全链路 LLM 评审")
     ap.add_argument("stage", choices=["creative", "storyboard", "asset", "video"])
     ap.add_argument("files", nargs="+", help="待评审文件：文本(.md/.txt/.srt…)、图片、视频")
     ap.add_argument("--context", nargs="*", help="前序关卡材料（如 brief、分镜），用于对照还原度")
     ap.add_argument("--transcript", help="成片台词/字幕文本")
     ap.add_argument("--runs", type=int, default=3, help="采样次数，默认 3")
     ap.add_argument("--frames", type=int, default=12, help="成片在前 3 秒之外均匀抽取的帧数")
-    ap.add_argument("--model", default="deepseek-flash")
+    ap.add_argument("--model", default=None, help="默认取 REVIEW_MODEL，未设置时为 deepseek-flash")
+    ap.add_argument("--mode", choices=["sample", "panel"], default="sample", help="sample：整套标准多次采样；panel：分维度评审团")
     ap.add_argument("--effort", choices=["low", "high", "max"], default="high")
     ap.add_argument("--platform-hint", default=DEFAULT_PLATFORM_HINT)
     ap.add_argument("--rubric", default=str(HERE / "rubrics.json"))
     ap.add_argument("--out", default=str(HERE / "reports"))
     args = ap.parse_args()
 
-    print(f"[{args.stage}] {args.runs} 次采样并发调用 {args.model} …", file=sys.stderr)
+    args.model = args.model or default_model()
+    print(f"[{args.stage}] {args.mode} · {args.runs} 次 · {args.model} …", file=sys.stderr)
     ev = evaluate(args.stage, args.files, args.context, args.transcript, args.runs, args.model, args.effort,
-                  args.frames, args.platform_hint, args.rubric)
+                  args.frames, args.platform_hint, args.rubric, mode=args.mode)
     result, tech, runs, usage = ev["result"], ev["tech"], ev["raw_runs"], ev["usage"]
 
     out = Path(args.out)

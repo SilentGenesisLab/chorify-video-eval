@@ -108,3 +108,15 @@ export function fileKind(p) {
   if ([".mp3", ".wav", ".m4a", ".aac"].includes(ext)) return "audio";
   return "text";
 }
+
+/** 评审器配置（与 video_review.py 同一来源：环境变量优先，其次仓库根目录 .env）。 */
+export function reviewEnv(name) {
+  if (process.env[name]) return process.env[name];
+  try {
+    return new RegExp(`^${name}=(.+)$`, "m").exec(fs.readFileSync(path.join(ROOT, ".env"), "utf8"))?.[1]?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export const reviewModel = () => reviewEnv("REVIEW_MODEL") || "deepseek-flash";

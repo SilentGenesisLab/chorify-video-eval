@@ -15,7 +15,7 @@ export default function Home() {
         <span className="eyebrow">G1 创意 → G2 分镜 → G3 资产 → G4 成片</span>
         <h1>视频广告四关评审</h1>
         <p className="lede">
-          每一关先查红线，再按维度打分，结论由规则算出。评审器用 deepseek-flash 读文字、看图、看成片关键帧，
+          每一关先查红线，再按维度打分，结论由规则算出。评审器用多模态大模型读文字、看图、看成片关键帧，
           技术指标（响度、黑场、冻结帧、分辨率）由程序测量。评审器的可靠性用 420 个带标准答案的构造用例验证。
         </p>
         <div className="row" style={{ marginTop: 8 }}>

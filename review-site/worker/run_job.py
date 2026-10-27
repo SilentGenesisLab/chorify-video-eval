@@ -21,10 +21,10 @@ def main():
     status = json.loads((d / "status.json").read_text())
     try:
         ev = video_review.evaluate(job["stage"], job["files"], job.get("context") or None, job.get("transcript"),
-                                   runs=job.get("runs", 3), effort=job.get("effort", "high"),
+                                   runs=job.get("runs", 3), effort=job.get("effort", "high"), mode=job.get("mode", "sample"),
                                    platform_hint=job.get("platform_hint") or video_review.DEFAULT_PLATFORM_HINT)
         (d / "result.json").write_text(json.dumps(ev, ensure_ascii=False, indent=1))
-        args = SimpleNamespace(files=job["files"], model="deepseek-flash", runs=job.get("runs", 3))
+        args = SimpleNamespace(files=job["files"], model=ev["model"], runs=job.get("runs", 3))
         (d / "report.md").write_text(video_review.render_markdown(ev["result"], ev["tech"], args, ev["usage"]))
         status.update(state="done", finished=time.time() * 1000)
     except Exception as e:
