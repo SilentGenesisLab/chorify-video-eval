@@ -337,10 +337,14 @@ def call_model(key, model, system, content, effort, retries=3):
                     body.pop(bad)
                     continue
             # 网关忙不算失败次数，等一会儿再试，最多等约 5 分钟：429 并发超限；「All available accounts exhausted」是网关上游账号暂时用尽
-            if isinstance(e, urllib.error.HTTPError) and (e.code == 429 or "accounts exhausted" in str(detail)) and busy < 12:
+            # 但「accounts exhausted」常常持续很久：只等 3 次（约半分钟）就放弃，让调用方换模型
+            exhausted = "accounts exhausted" in str(detail)
+            if isinstance(e, urllib.error.HTTPError) and (e.code == 429 or exhausted) and busy < (3 if exhausted else 12):
                 busy += 1
                 time.sleep(min(60, 5 * busy) + random.random() * 5)
                 continue
+            if exhausted:
+                raise RuntimeError(f"评审模型 {model} 暂时不可用（接口上游账号用尽），请换一个模型")
             attempt += 1
             print(f"  第 {attempt} 次调用失败：{detail}", file=sys.stderr)
             time.sleep(2 ** attempt)
