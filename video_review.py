@@ -315,7 +315,9 @@ def call_model(key, model, system, content, effort, retries=3):
     import random
     body = {"model": model, "temperature": 0.2, "max_tokens": 8000, "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}]}
-    if effort:
+    if effort == "off":
+        body["thinking"] = {"type": "disabled"}  # 关掉思考：deepseek-flash 单次从约 6 秒降到 1–2 秒
+    elif effort:
         body["reasoning_effort"] = effort
     attempt = busy = 0
     while attempt < retries:
@@ -332,7 +334,7 @@ def call_model(key, model, system, content, effort, retries=3):
                 raise RuntimeError(f"API 鉴权或余额问题，停止重试：{detail}")
             # 有的模型不接受某些可选参数（如 claude-sonnet-5-5 不允许改 temperature）：去掉被点名的参数再试，不计失败次数
             if isinstance(e, urllib.error.HTTPError) and e.code == 400:
-                bad = next((k for k in ("temperature", "reasoning_effort", "response_format") if k in body and k in str(detail)), None)
+                bad = next((k for k in ("temperature", "reasoning_effort", "thinking", "response_format") if k in body and k in str(detail)), None)
                 if bad:
                     body.pop(bad)
                     continue
@@ -476,7 +478,7 @@ def main():
     ap.add_argument("--frames", type=int, default=12, help="成片在前 3 秒之外均匀抽取的帧数")
     ap.add_argument("--model", default=None, help="默认取 REVIEW_MODEL，未设置时为 deepseek-flash")
     ap.add_argument("--mode", choices=["sample", "panel"], default="sample", help="sample：整套标准多次采样；panel：分维度评审团")
-    ap.add_argument("--effort", choices=["low", "high", "max"], default="high")
+    ap.add_argument("--effort", choices=["off", "low", "high", "max"], default="high")
     ap.add_argument("--platform-hint", default=DEFAULT_PLATFORM_HINT)
     ap.add_argument("--rubric", default=str(HERE / "rubrics.json"))
     ap.add_argument("--out", default=str(HERE / "reports"))

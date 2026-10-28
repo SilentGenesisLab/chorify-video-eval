@@ -86,7 +86,7 @@ export function createReview(input) {
   const allowed = (reviewEnv("REVIEW_ALLOWED_MODELS") || "").split(",").map((x) => x.trim()).filter(Boolean);
   if (model && allowed.length && !allowed.includes(model)) throw new ApiError(400, "invalid_model", `model 必须是以下之一：${allowed.join(", ")}`);
   const effort = input.effort || "high";
-  if (!["low", "high", "max"].includes(effort)) throw new ApiError(400, "invalid_effort", "effort 必须是 low / high / max");
+  if (!["off", "low", "high", "max"].includes(effort)) throw new ApiError(400, "invalid_effort", "effort 必须是 off（不思考）/ low / high / max");
   const cb = (input.callback_url || "").trim();
   if (cb && !/^https?:\/\/[^\s]+$/i.test(cb)) throw new ApiError(400, "invalid_callback_url", "callback_url 必须是 http(s) 地址");
 
