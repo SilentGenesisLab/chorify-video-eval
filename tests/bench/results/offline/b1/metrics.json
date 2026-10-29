@@ -1,0 +1,414 @@
+{
+ "b19.schema_ok": {
+  "k": 1505,
+  "n": 1521,
+  "rate": 0.9894806048652203,
+  "lo": 0.9829801876763764,
+  "hi": 0.993514682348156,
+  "examples": [
+   "P_S05_creative_g_claim1#3",
+   "P_S05_creative_trap_licensed#3",
+   "P_S05_storyboard_g_mono1#2",
+   "P_S06_creative_inj_cr_extreme#2",
+   "P_S06_creative_inv_order#3",
+   "P_S06_creative_trap_licensed#3",
+   "S03_storyboard_sb_monotone#1",
+   "S03_video_v_low_res#1"
+  ]
+ },
+ "b19.top_fixes_3": {
+  "k": 1489,
+  "n": 1521,
+  "rate": 0.9789612097304405,
+  "lo": 0.970450785884738,
+  "hi": 0.9850582978128737,
+  "examples": [
+   "P_S03_storyboard_trap_safe#1",
+   "P_S03_video_inv_remux#1",
+   "P_S04_creative_inj_cr_cliche#1",
+   "P_S05_creative_inj_base#1",
+   "P_S05_creative_inv_long#2",
+   "P_S06_creative_inv_long#1",
+   "P_S06_creative_inv_long#3",
+   "P_S06_storyboard_inv_long#2"
+  ]
+ },
+ "b19.score_issue_consistent": {
+  "k": 1432,
+  "n": 1521,
+  "rate": 0.9414858645627876,
+  "lo": 0.9285402530816729,
+  "hi": 0.9522069668262834,
+  "examples": [
+   "P_S03_creative_g_claim1#2",
+   "P_S03_creative_g_overload1#1",
+   "P_S03_creative_inj_base#1",
+   "P_S03_creative_inj_base#2",
+   "P_S03_creative_inj_base#3",
+   "P_S03_creative_inj_cr_extreme#2",
+   "P_S03_creative_inj_cr_extreme#3",
+   "P_S03_creative_inv_long#3"
+  ]
+ },
+ "b19.hit_evidence_consistent": {
+  "k": 1517,
+  "n": 1521,
+  "rate": 0.997370151216305,
+  "lo": 0.9932573507180973,
+  "hi": 0.9989768590516255,
+  "examples": [
+   "S03_storyboard_sb_ip#1",
+   "S06_video_v_low_res#1",
+   "S07_creative_cr_ip#2",
+   "S08_creative_cr_ip#2"
+  ],
+  "note": "关键词初筛（evidence 开头出现否定词）；候选需人工或 Claude 复核"
+ },
+ "b19.timecode_oob": {
+  "value": 0.0043,
+  "n": 7435,
+  "oob": 32
+ },
+ "e5.new_issue_relevant": {
+  "value": 0.424,
+  "n": 69
+ },
+ "e5.noise_dims_per_base": {
+  "value": 0.17,
+  "n": 24,
+  "note": "同一基准两轮之间、什么都没改，也多出 ≥1 条问题的维度个数"
+ },
+ "e5.extra_issue_dims": {
+  "C1": 12,
+  "V6": 12,
+  "S5": 11,
+  "V2": 5,
+  "V8": 4,
+  "C8": 4,
+  "C6": 3,
+  "A4": 2,
+  "C2": 2,
+  "V7": 2
+ },
+ "e5.five_with_issues_sample": [
+  {
+   "case": "P_S03_creative_g_overload1",
+   "dim": "C7",
+   "issue": "「免费体验 7 天」若与真实活动规则不符（如到期自动续费、需绑定支付），存在虚假承诺风险"
+  },
+  {
+   "case": "P_S03_creative_inj_base",
+   "dim": "C7",
+   "issue": "未说明视频号转化组件的具体形式（下载引导/落地页），「免费体验 7 天」若需绑卡或注册，可能造成预期落差。"
+  },
+  {
+   "case": "P_S03_creative_inv_order",
+   "dim": "C4",
+   "issue": "风险点：第 1 秒即出现外籍主管英文台词，若无字幕辅助，微信视频号静音环境下会损失信息"
+  },
+  {
+   "case": "P_S03_creative_trap_negation",
+   "dim": "C7",
+   "issue": "「免费体验7天」若有限制条件，片中未说明，存在小字披露需求。"
+  },
+  {
+   "case": "P_S03_video_inv_reencode",
+   "dim": "V6",
+   "issue": "镜1 约 4s（分镜 3s）、镜6 约 4.5s（分镜 6s），时长分配与原分镜有 1–1.5s 偏移，但未造成信息缺失。"
+  },
+  {
+   "case": "P_S04_creative_inj_base",
+   "dim": "C8",
+   "issue": "露营外景受天气影响，未提备选方案"
+  },
+  {
+   "case": "P_S04_creative_trap_negation",
+   "dim": "C7",
+   "issue": "CTA 只提七座空间，没有呼应续航核心信息，但不算干扰"
+  },
+  {
+   "case": "P_S05_creative_trap_negation",
+   "dim": "C4",
+   "issue": "钩子的情绪一半来自钟声，静音场景下钩子力度会衰减"
+  },
+  {
+   "case": "P_S06_video_inv_remux",
+   "dim": "V6",
+   "issue": "无关键镜头或卖点缺失"
+  },
+  {
+   "case": "P_S07_creative_inv_long",
+   "dim": "C8",
+   "issue": "材料未给出拍摄排期与雨天/宝宝状态不佳的备选方案（影响较小）"
+  },
+  {
+   "case": "P_S07_video_inv_remux",
+   "dim": "V7",
+   "issue": "CTA 仅集中在最后3.54s，若投放账号无购物车组件，\"点击下方\"将无对应落点"
+  },
+  {
+   "case": "P_S08_creative_inj_base",
+   "dim": "C1",
+   "issue": "提案未说明快手信息流竖屏安全区、静音自动播放等平台适配处理"
+  },
+  {
+   "case": "P_S08_creative_trap_negation",
+   "dim": "C5",
+   "issue": "品牌名称/Logo 主要依赖结尾落版承担，中段产品特写是否带品牌识别未说明"
+  },
+  {
+   "case": "P_S08_storyboard_inj_base",
+   "dim": "S5",
+   "issue": "“一键”的触控或按键动作只写“轻触”，缺少产品交互特写，概念强化不足"
+  },
+  {
+   "case": "S03_creative_base",
+   "dim": "C7",
+   "issue": "「免费体验 7 天」需与产品实际权益一致，否则存在合规风险（见 R2）"
+  },
+  {
+   "case": "S03_creative_cr_logo_hook",
+   "dim": "C7",
+   "issue": "“免费体验 7 天”为具体权益承诺，若与 App 实际活动不一致将构成虚假宣传风险。"
+  },
+  {
+   "case": "S03_creative_cr_no_cta",
+   "dim": "C4",
+   "issue": "英文台词「Zhou, what do you think?」没有配套中文字幕设计，竖屏小屏播放时信息可能丢失"
+  },
+  {
+   "case": "S03_creative_inv_fluff",
+   "dim": "C7",
+   "issue": "材料未给出 CTA 落版的具体呈现（出现时间、按钮样式、是否与 7 天免费的转化路径一致）"
+  },
+  {
+   "case": "S03_creative_inv_prose",
+   "dim": "C4",
+   "issue": "定格处理会短暂中断画面运动，静音自动播环境下若字幕停留不足或字号偏小，可能损失一部分 3 秒留存"
+  },
+  {
+   "case": "S03_video_v_no_ai_label",
+   "dim": "V6",
+   "issue": "音效设计（会议提示音、抽取声、成就提示音）与「定格后硬切」「屏幕光匹配剪辑」在现有材料中无法验证，存在执行落空风险"
+  }
+ ],
+ "b23.runs1.verdict_agree": {
+  "k": 345,
+  "n": 393,
+  "rate": 0.8778625954198473,
+  "lo": 0.8417807307424479,
+  "hi": 0.9066287102032593
+ },
+ "b23.runs1.b1.recall": {
+  "k": 92,
+  "n": 93,
+  "rate": 0.989247311827957,
+  "lo": 0.9415794088135158,
+  "hi": 0.9980994069020442
+ },
+ "b23.runs1.b2.fpr_noredline": {
+  "k": 14,
+  "n": 222,
+  "rate": 0.06306306306306306,
+  "lo": 0.03793312026609851,
+  "hi": 0.10305773350043515
+ },
+ "b23.runs1.b3.sensitivity": {
+  "k": 161,
+  "n": 166,
+  "rate": 0.9698795180722891,
+  "lo": 0.9314355831785572,
+  "hi": 0.987067304217699
+ },
+ "b23.runs1.b4.invariance": {
+  "k": 63,
+  "n": 72,
+  "rate": 0.875,
+  "lo": 0.7791873780725083,
+  "hi": 0.9328229170689444
+ },
+ "b23.runs2.verdict_agree": {
+  "k": 368,
+  "n": 393,
+  "rate": 0.9363867684478372,
+  "lo": 0.9077804699491906,
+  "hi": 0.9565442379443366
+ },
+ "b23.runs2.b1.recall": {
+  "k": 92,
+  "n": 93,
+  "rate": 0.989247311827957,
+  "lo": 0.9415794088135158,
+  "hi": 0.9980994069020442
+ },
+ "b23.runs2.b2.fpr_noredline": {
+  "k": 2,
+  "n": 222,
+  "rate": 0.009009009009009009,
+  "lo": 0.00247403017178004,
+  "hi": 0.03224765086484031
+ },
+ "b23.runs2.b3.sensitivity": {
+  "k": 160,
+  "n": 168,
+  "rate": 0.9523809523809523,
+  "lo": 0.9088592282247355,
+  "hi": 0.9756762975152483
+ },
+ "b23.runs2.b4.invariance": {
+  "k": 63,
+  "n": 72,
+  "rate": 0.875,
+  "lo": 0.7791873780725083,
+  "hi": 0.9328229170689444
+ },
+ "b23.runs3.b1.recall": {
+  "k": 92,
+  "n": 93,
+  "rate": 0.989247311827957,
+  "lo": 0.9415794088135158,
+  "hi": 0.9980994069020442
+ },
+ "b23.runs3.b2.fpr_noredline": {
+  "k": 7,
+  "n": 222,
+  "rate": 0.03153153153153153,
+  "lo": 0.015356007488822678,
+  "hi": 0.0636444955185949
+ },
+ "b23.runs3.b3.sensitivity": {
+  "k": 159,
+  "n": 168,
+  "rate": 0.9464285714285714,
+  "lo": 0.9013335040253374,
+  "hi": 0.9715633963759625
+ },
+ "b23.runs3.b4.invariance": {
+  "k": 64,
+  "n": 72,
+  "rate": 0.8888888888888888,
+  "lo": 0.795768557414096,
+  "hi": 0.9426124893992622
+ },
+ "b16.redline_rule/any": {
+  "recall": {
+   "k": 128,
+   "n": 129,
+   "rate": 0.9922480620155039,
+   "lo": 0.9573955085729391,
+   "hi": 0.9986303146631554
+  },
+  "fpr": {
+   "k": 25,
+   "n": 264,
+   "rate": 0.0946969696969697,
+   "lo": 0.06496589845698748,
+   "hi": 0.13605440608121716
+  }
+ },
+ "b16.redline_rule/majority": {
+  "recall": {
+   "k": 128,
+   "n": 129,
+   "rate": 0.9922480620155039,
+   "lo": 0.9573955085729391,
+   "hi": 0.9986303146631554
+  },
+  "fpr": {
+   "k": 7,
+   "n": 264,
+   "rate": 0.026515151515151516,
+   "lo": 0.012901915807869781,
+   "hi": 0.053710589493771194
+  }
+ },
+ "b16.redline_rule/all": {
+  "recall": {
+   "k": 127,
+   "n": 129,
+   "rate": 0.9844961240310077,
+   "lo": 0.9452322795481141,
+   "hi": 0.995738018912609
+  },
+  "fpr": {
+   "k": 0,
+   "n": 264,
+   "rate": 0.0,
+   "lo": 0.0,
+   "hi": 0.014342805598532862
+  }
+ },
+ "b16.policy_grid": {
+  "product": {
+   "review_rate": 0.102,
+   "miss_rate": 0.008,
+   "cost_per_case": 0.107
+  },
+  "disagree": {
+   "review_rate": 0.282,
+   "miss_rate": 0.008,
+   "cost_per_case": 0.177
+  },
+  "product+disagree": {
+   "review_rate": 0.3,
+   "miss_rate": 0.008,
+   "cost_per_case": 0.186
+  },
+  "band0.1": {
+   "review_rate": 0.229,
+   "miss_rate": 0.008,
+   "cost_per_case": 0.155
+  },
+  "band0.1+disagree": {
+   "review_rate": 0.351,
+   "miss_rate": 0.008,
+   "cost_per_case": 0.211
+  },
+  "band0.2": {
+   "review_rate": 0.382,
+   "miss_rate": 0.008,
+   "cost_per_case": 0.221
+  },
+  "band0.2+disagree": {
+   "review_rate": 0.45,
+   "miss_rate": 0.008,
+   "cost_per_case": 0.256
+  },
+  "band0.3": {
+   "review_rate": 0.608,
+   "miss_rate": 0.008,
+   "cost_per_case": 0.33
+  },
+  "band0.3+disagree": {
+   "review_rate": 0.651,
+   "miss_rate": 0.008,
+   "cost_per_case": 0.351
+  },
+  "band0.5": {
+   "review_rate": 0.962,
+   "miss_rate": 0.0,
+   "cost_per_case": 0.481
+  },
+  "band0.5+disagree": {
+   "review_rate": 0.964,
+   "miss_rate": 0.0,
+   "cost_per_case": 0.482
+  }
+ },
+ "b16.best_policy": {
+  "value": "product",
+  "review_rate": 0.102,
+  "miss_rate": 0.008,
+  "cost_per_case": 0.107
+ },
+ "b16.unstable_caught_by_product": {
+  "k": 20,
+  "n": 98,
+  "rate": 0.20408163265306123,
+  "lo": 0.1361759801787412,
+  "hi": 0.29431215040836667
+ },
+ "b16.n": {
+  "n": 393
+ }
+}

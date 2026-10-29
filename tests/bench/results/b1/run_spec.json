@@ -1,0 +1,21 @@
+{
+ "name": "b1",
+ "round": "r2",
+ "sets": [
+  "main",
+  "probes"
+ ],
+ "preset": "stability",
+ "stages": null,
+ "kinds": null,
+ "probe": null,
+ "cases": null,
+ "limit": null,
+ "runs": 3,
+ "model": "deepseek-flash",
+ "effort": "high",
+ "workers": 6,
+ "max_cost": 14.0,
+ "dry_run": false,
+ "data": "C:\\Users\\asus\\AppData\\Local\\Temp\\vr_bench\\src\\benchmark"
+}

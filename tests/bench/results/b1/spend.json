@@ -1,0 +1,36 @@
+[
+ {
+  "round": "r1",
+  "segment": "1（手动中止，余额手工记录）",
+  "ok": 62,
+  "failed": 0,
+  "skipped_by_budget": 0,
+  "estimated_cny": 6.75,
+  "balance_before": 151.78,
+  "balance_after": 142.59,
+  "actual_cny": 9.19,
+  "note": "实际单价约 ¥4.03/百万 token，高于预估 ¥2.96；后续段按 VR_BENCH_CNY_PER_MTOKEN=4.03 估算"
+ },
+ {
+  "round": "r1",
+  "ok": 445,
+  "failed": 0,
+  "skipped_by_budget": 0,
+  "estimated_cny": 55.26,
+  "balance_before": 138.86,
+  "balance_after": 362.26,
+  "actual_cny": -223.4,
+  "minutes": 67.4
+ },
+ {
+  "round": "r2",
+  "ok": 72,
+  "failed": 0,
+  "skipped_by_budget": 0,
+  "estimated_cny": 10.68,
+  "balance_before": 362.26,
+  "balance_after": 356.47,
+  "actual_cny": 5.79,
+  "minutes": 12.0
+ }
+]

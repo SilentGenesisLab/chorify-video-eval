@@ -1,0 +1,248 @@
+{
+ "S03_claim": {
+  "stage": "creative",
+  "metric": "redline",
+  "target": "R2",
+  "cases": [
+   "S03_creative_base",
+   "P_S03_creative_g_claim1",
+   "P_S03_creative_g_claim2",
+   "S03_creative_cr_extreme"
+  ]
+ },
+ "S03_overload": {
+  "stage": "creative",
+  "metric": "dim",
+  "target": "C6",
+  "cases": [
+   "S03_creative_base",
+   "P_S03_creative_g_overload1",
+   "S03_creative_cr_overload"
+  ]
+ },
+ "S03_drop_fields": {
+  "stage": "storyboard",
+  "metric": "dim",
+  "target": "S7",
+  "cases": [
+   "S03_storyboard_base",
+   "P_S03_storyboard_g_drop1",
+   "S03_storyboard_sb_drop_fields"
+  ]
+ },
+ "S03_monotone": {
+  "stage": "storyboard",
+  "metric": "dim",
+  "target": "S2",
+  "cases": [
+   "S03_storyboard_base",
+   "P_S03_storyboard_g_mono1",
+   "S03_storyboard_sb_monotone"
+  ]
+ },
+ "S04_claim": {
+  "stage": "creative",
+  "metric": "redline",
+  "target": "R2",
+  "cases": [
+   "S04_creative_base",
+   "P_S04_creative_g_claim1",
+   "P_S04_creative_g_claim2",
+   "S04_creative_cr_extreme"
+  ]
+ },
+ "S04_overload": {
+  "stage": "creative",
+  "metric": "dim",
+  "target": "C6",
+  "cases": [
+   "S04_creative_base",
+   "P_S04_creative_g_overload1",
+   "S04_creative_cr_overload"
+  ]
+ },
+ "S04_drop_fields": {
+  "stage": "storyboard",
+  "metric": "dim",
+  "target": "S7",
+  "cases": [
+   "S04_storyboard_base",
+   "P_S04_storyboard_g_drop1",
+   "S04_storyboard_sb_drop_fields"
+  ]
+ },
+ "S04_monotone": {
+  "stage": "storyboard",
+  "metric": "dim",
+  "target": "S2",
+  "cases": [
+   "S04_storyboard_base",
+   "P_S04_storyboard_g_mono1",
+   "S04_storyboard_sb_monotone"
+  ]
+ },
+ "S05_claim": {
+  "stage": "creative",
+  "metric": "redline",
+  "target": "R2",
+  "cases": [
+   "S05_creative_base",
+   "P_S05_creative_g_claim1",
+   "P_S05_creative_g_claim2",
+   "S05_creative_cr_extreme"
+  ]
+ },
+ "S05_overload": {
+  "stage": "creative",
+  "metric": "dim",
+  "target": "C6",
+  "cases": [
+   "S05_creative_base",
+   "P_S05_creative_g_overload1",
+   "S05_creative_cr_overload"
+  ]
+ },
+ "S05_drop_fields": {
+  "stage": "storyboard",
+  "metric": "dim",
+  "target": "S7",
+  "cases": [
+   "S05_storyboard_base",
+   "P_S05_storyboard_g_drop1",
+   "S05_storyboard_sb_drop_fields"
+  ]
+ },
+ "S05_monotone": {
+  "stage": "storyboard",
+  "metric": "dim",
+  "target": "S2",
+  "cases": [
+   "S05_storyboard_base",
+   "P_S05_storyboard_g_mono1",
+   "S05_storyboard_sb_monotone"
+  ]
+ },
+ "S06_claim": {
+  "stage": "creative",
+  "metric": "redline",
+  "target": "R2",
+  "cases": [
+   "S06_creative_base",
+   "P_S06_creative_g_claim1",
+   "P_S06_creative_g_claim2",
+   "S06_creative_cr_extreme"
+  ]
+ },
+ "S06_overload": {
+  "stage": "creative",
+  "metric": "dim",
+  "target": "C6",
+  "cases": [
+   "S06_creative_base",
+   "P_S06_creative_g_overload1",
+   "S06_creative_cr_overload"
+  ]
+ },
+ "S06_drop_fields": {
+  "stage": "storyboard",
+  "metric": "dim",
+  "target": "S7",
+  "cases": [
+   "S06_storyboard_base",
+   "P_S06_storyboard_g_drop1",
+   "S06_storyboard_sb_drop_fields"
+  ]
+ },
+ "S06_monotone": {
+  "stage": "storyboard",
+  "metric": "dim",
+  "target": "S2",
+  "cases": [
+   "S06_storyboard_base",
+   "P_S06_storyboard_g_mono1",
+   "S06_storyboard_sb_monotone"
+  ]
+ },
+ "S07_claim": {
+  "stage": "creative",
+  "metric": "redline",
+  "target": "R2",
+  "cases": [
+   "S07_creative_base",
+   "P_S07_creative_g_claim1",
+   "P_S07_creative_g_claim2",
+   "S07_creative_cr_extreme"
+  ]
+ },
+ "S07_overload": {
+  "stage": "creative",
+  "metric": "dim",
+  "target": "C6",
+  "cases": [
+   "S07_creative_base",
+   "P_S07_creative_g_overload1",
+   "S07_creative_cr_overload"
+  ]
+ },
+ "S07_drop_fields": {
+  "stage": "storyboard",
+  "metric": "dim",
+  "target": "S7",
+  "cases": [
+   "S07_storyboard_base",
+   "P_S07_storyboard_g_drop1",
+   "S07_storyboard_sb_drop_fields"
+  ]
+ },
+ "S07_monotone": {
+  "stage": "storyboard",
+  "metric": "dim",
+  "target": "S2",
+  "cases": [
+   "S07_storyboard_base",
+   "P_S07_storyboard_g_mono1",
+   "S07_storyboard_sb_monotone"
+  ]
+ },
+ "S08_claim": {
+  "stage": "creative",
+  "metric": "redline",
+  "target": "R2",
+  "cases": [
+   "S08_creative_base",
+   "P_S08_creative_g_claim1",
+   "P_S08_creative_g_claim2",
+   "S08_creative_cr_extreme"
+  ]
+ },
+ "S08_overload": {
+  "stage": "creative",
+  "metric": "dim",
+  "target": "C6",
+  "cases": [
+   "S08_creative_base",
+   "P_S08_creative_g_overload1",
+   "S08_creative_cr_overload"
+  ]
+ },
+ "S08_drop_fields": {
+  "stage": "storyboard",
+  "metric": "dim",
+  "target": "S7",
+  "cases": [
+   "S08_storyboard_base",
+   "P_S08_storyboard_g_drop1",
+   "S08_storyboard_sb_drop_fields"
+  ]
+ },
+ "S08_monotone": {
+  "stage": "storyboard",
+  "metric": "dim",
+  "target": "S2",
+  "cases": [
+   "S08_storyboard_base",
+   "P_S08_storyboard_g_mono1",
+   "S08_storyboard_sb_monotone"
+  ]
+ }
+}

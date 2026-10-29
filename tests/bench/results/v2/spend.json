@@ -1,0 +1,46 @@
+[
+ {
+  "round": "r1",
+  "ok": 92,
+  "failed": 0,
+  "skipped_by_budget": 0,
+  "estimated_cny": 18.63,
+  "balance_before": 313.28,
+  "balance_after": 304.19,
+  "actual_cny": 9.09,
+  "minutes": 15.1
+ },
+ {
+  "round": "r1",
+  "ok": 100,
+  "failed": 0,
+  "skipped_by_budget": 0,
+  "estimated_cny": 22.67,
+  "balance_before": 301.87,
+  "balance_after": 290.54,
+  "actual_cny": 11.33,
+  "minutes": 20.8
+ },
+ {
+  "round": "r1",
+  "ok": 210,
+  "failed": 0,
+  "skipped_by_budget": 0,
+  "estimated_cny": 18.03,
+  "balance_before": 289.35,
+  "balance_after": 273.24,
+  "actual_cny": 16.11,
+  "minutes": 21.6
+ },
+ {
+  "round": "r1",
+  "ok": 207,
+  "failed": 0,
+  "skipped_by_budget": 0,
+  "estimated_cny": 34.89,
+  "balance_before": 273.24,
+  "balance_after": 232.47,
+  "actual_cny": 40.77,
+  "minutes": 32.9
+ }
+]

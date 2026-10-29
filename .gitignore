@@ -23,3 +23,31 @@ samples/*.mp4
 *.log
 *.err
 .call-slots/
+# B 层第二轮用例的媒体（cases_v2.py 重新生成）与评测结果之外的离线产物
+tests/bench/v2/cases/**/*.mp4
+tests/bench/v2/cases/**/*.png
+tests/bench/v2/cases/**/*.jpg
+tests/bench/v2/cases/**/*.wav
+
+# 测试缓存
+.hypothesis/
+.pytest_cache/
+.coverage
+
+# 客户材料（仓库公开，不提交）：真实素材子集 b10 / b15 的结果、引用真实项目的生成脚本、报告与设计记录
+# 这些文件只留在本地和内部评测 zip 里
+*评测-*.zip
+tests/bench/fam_real.py
+tests/bench/export_cases.py
+tests/bench/results/v2/r1/b10_*.json
+tests/bench/results/v2/r1/b15_*.json
+tests/bench/results/v2/r1/fails.json
+tests/bench/results/v2/r1/report.md
+tests/bench/results/v2_r1_report.md
+tests/bench/REPORT_B.md
+tests/bench/STATUS_v2.md
+tests/bench/DESIGN_v2.md
+tests/bench/probes/media/
+tests/bench/annotations/packets/**/*.mp4
+tests/bench/annotations/packets/**/*.png
+benchmark/annotation/材料/
