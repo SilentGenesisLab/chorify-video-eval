@@ -413,7 +413,7 @@ def platform_hint(sc, size=None):
 
 def write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return str(path.relative_to(HERE))
 
 
@@ -572,14 +572,14 @@ def main():
     ap.add_argument("--stages", nargs="*", default=["creative", "storyboard", "asset", "video"])
     ap.add_argument("--scenarios", nargs="*")
     args = ap.parse_args()
-    scs = json.loads((HERE / "scenarios.json").read_text())
+    scs = json.loads((HERE / "scenarios.json").read_text(encoding="utf-8"))
     if args.scenarios:
         scs = [s for s in scs if s["id"] in args.scenarios]
     builders = {"creative": build_creative, "storyboard": build_storyboard, "asset": build_asset, "video": build_video}
     labels_path = OUT / "labels.jsonl"
     existing = {}
     if labels_path.exists():
-        for line in labels_path.read_text().splitlines():
+        for line in labels_path.read_text(encoding="utf-8").splitlines():
             r = json.loads(line)
             existing[r["case_id"]] = r
     for sc in scs:
@@ -589,7 +589,7 @@ def main():
             for r in builders[st](sc):
                 existing[r["case_id"]] = r
     OUT.mkdir(exist_ok=True)
-    labels_path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in sorted(existing.values(), key=lambda r: r["case_id"])) + "\n")
+    labels_path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in sorted(existing.values(), key=lambda r: r["case_id"])) + "\n", encoding="utf-8")
     from collections import Counter
     c = Counter((r["stage"], r["kind"]) for r in existing.values())
     print(f"共 {len(existing)} 条：" + "，".join(f"{s}/{k}={n}" for (s, k), n in sorted(c.items())))

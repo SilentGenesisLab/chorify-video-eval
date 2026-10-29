@@ -184,8 +184,11 @@ export function openapi(server) {
         Result: {
           type: "object",
           properties: {
-            verdict: { type: "string", enum: ["通过", "修改后通过", "驳回", "驳回（命中红线）"] }, total: { type: "number" }, min_dimension: { type: "number" },
-            needs_human_review: { type: "array", items: { type: "string" } }, summary: { type: "string" },
+            verdict: { type: "string", enum: ["通过", "修改后通过", "驳回", "驳回（命中红线）", "无法判定（评审输出不完整）"] },
+            total: { type: "number", nullable: true }, min_dimension: { type: "number", nullable: true },
+            needs_human_review: { type: "array", items: { type: "string" } },
+            review_reasons: { type: "object", additionalProperties: { type: "string" }, description: "needs_human_review 每一项的原因" },
+            summary: { type: "string" },
             top_fixes: { type: "array", items: { type: "string" } }, highlights: { type: "array", items: { type: "string" } },
             redlines: { type: "array", items: ref("Redline") }, dimensions: { type: "array", items: ref("Dimension") },
             tech: { type: "object", nullable: true, description: "成片技术参数（程序测量）" },

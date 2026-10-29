@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { Marked, marked } from "marked";
+import { Marked } from "marked";
 
 // 站点读取的是评审器工程里的真实文件，评测结果更新后刷新页面即可看到
 export const ROOT = path.resolve(process.env.REVIEW_ROOT || path.join(process.cwd(), ".."));
@@ -26,7 +26,28 @@ export const readText = (p) => {
   }
 };
 
-export const md = (text) => marked.parse(text || "", { gfm: true });
+// 数据集与评审材料里的 Markdown：去掉原始 HTML，只保留 http(s) / mailto / 相对链接
+const escapeHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const safeHref = (href) => (/^(https?:|mailto:)/i.test(href || "") || !/^[a-z][a-z0-9+.-]*:/i.test(href || "") ? href : null);
+const safeMarked = new Marked({
+  gfm: true,
+  renderer: {
+    html() {
+      return "";
+    },
+    link({ href, title, tokens }) {
+      const label = this.parser.parseInline(tokens);
+      const h = safeHref(href);
+      return h == null ? label : `<a href="${escapeHtml(h)}"${title ? ` title="${escapeHtml(title)}"` : ""}>${label}</a>`;
+    },
+    image({ href, title, text }) {
+      const h = safeHref(href);
+      return h == null ? escapeHtml(text) : `<img src="${escapeHtml(h)}" alt="${escapeHtml(text)}"${title ? ` title="${escapeHtml(title)}"` : ""}>`;
+    },
+  },
+});
+
+export const md = (text) => safeMarked.parse(text || "");
 
 // 带目录的长文档：给 h2/h3 加锚点
 export function doc(text) {

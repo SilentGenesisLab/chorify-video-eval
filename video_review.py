@@ -47,9 +47,16 @@ def env_value(name):
         return os.environ[name]
     env = HERE / ".env"
     if env.exists():
-        for line in env.read_text().splitlines():
-            if line.startswith(f"{name}="):
-                return line.split("=", 1)[1].strip() or None
+        for line in env.read_text(encoding="utf-8-sig").splitlines():
+            line = line.strip()
+            if line.startswith("export "):
+                line = line[7:].lstrip()
+            k, sep, v = line.partition("=")
+            if sep and k.strip() == name:
+                v = v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+                    v = v[1:-1]
+                return v or None
     return None
 
 
@@ -89,9 +96,17 @@ def probe_video(path):
     err = run_ffmpeg(["-i", str(path)])
     if m := re.search(r"Duration: (\d+):(\d+):([\d.]+)", err):
         info["时长(秒)"] = round(int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3]), 2)
-    if m := re.search(r"Video: (\w+).*?, (\d{2,5})x(\d{2,5})", err):
-        w, h = int(m[2]), int(m[3])
-        info.update({"视频编码": m[1], "分辨率": f"{w}x{h}", "画幅": f"{w / h:.3f} ({'竖屏' if h > w else '横屏' if w > h else '方形'})"})
+    m = re.search(r"Video: (\w+).*?, (\d{2,5})x(\d{2,5})", err)
+    if not m:
+        # 文件不存在、为空、损坏或只有音轨：不再继续测量，免得返回残缺参数（如误导性的「无音轨」）
+        last = next((l.strip() for l in reversed(err.splitlines()) if l.strip()), "")
+        return {"错误": f"无法读取视频流：{last[-200:] or '未知错误'}", **info}
+    w, h = int(m[2]), int(m[3])
+    # 手机竖拍常编码成横向 + 旋转元数据，按显示方向报分辨率
+    rot = re.search(r"rotation of (-?[\d.]+) degrees", err) or re.search(r"rotate\s*:\s*(-?\d+)", err)
+    if rot and round(abs(float(rot[1]))) % 180 == 90:
+        w, h = h, w
+    info.update({"视频编码": m[1], "分辨率": f"{w}x{h}", "画幅": f"{w / h:.3f} ({'竖屏' if h > w else '横屏' if w > h else '方形'})"})
     if m := re.search(r"([\d.]+) fps", err):
         info["帧率"] = float(m[1])
     if m := re.search(r"Audio: (\w+).*?, (\d+) Hz, ([^,]+)", err):
@@ -118,10 +133,11 @@ def probe_video(path):
 def extract_frames(path, duration, n, outdir):
     """前 3 秒每 0.5 秒一帧（看钩子），其余时长均匀抽 n 帧。"""
     times = [t / 2 for t in range(0, 6) if t / 2 < duration]
-    if duration > 3:
+    if duration > 3 and n > 0:
         step = (duration - 3) / n
         times += [round(3 + step * (i + 0.5), 2) for i in range(n)]
-    times.append(max(duration - 0.1, 0))  # 尾帧（CTA）
+    tail = max(duration - 0.1, 0)
+    times.append(tail)  # 尾帧（CTA）
     frames = []
     for t in sorted(set(times)):
         out = Path(outdir) / f"frame_{t:07.2f}.jpg"
@@ -129,6 +145,14 @@ def extract_frames(path, duration, n, outdir):
                         "-frames:v", "1", "-vf", "scale='min(768,iw)':-2", "-q:v", "3", "-y", str(out)])
         if out.exists():
             frames.append((t, out))
+    if frames and Path(path).is_file() and not any(t == tail for t, _ in frames):
+        # duration 是容器时长，音轨比视频长时尾帧时间点超出了视频流：解码到视频流末尾，保留最后一帧
+        out = Path(outdir) / "frame_tail.jpg"
+        p = subprocess.run([ffmpeg_exe(), "-hide_banner", "-i", str(path), "-map", "0:v:0", "-vf", "scale='min(768,iw)':-2",
+                            "-q:v", "3", "-update", "1", "-y", str(out)], capture_output=True, text=True, errors="replace")
+        if out.exists() and (m := re.findall(r"time=(\d+):(\d+):([\d.]+)", p.stderr)):
+            h, mi, sec = m[-1]
+            frames.append((round(max(int(h) * 3600 + int(mi) * 60 + float(sec) - 0.1, 0), 2), out))
     return frames
 
 
@@ -140,7 +164,7 @@ def build_system_prompt(stage, rubric, panel=None):
     if panel:
         return build_panel_prompt(stage, rubric, panel)
     dims = "\n".join(
-        f"- {d['id']} {d['name']}（权重 {int(d['weight'] * 100)}%）：{d['criteria']}\n"
+        f"- {d['id']} {d['name']}（权重 {round(d['weight'] * 100)}%）：{d['criteria']}\n"
         f"    5 分样子：{d['anchor_5']}；2 分样子：{d['anchor_2']}"
         for d in s["dimensions"])
     scale = "\n".join(f"  {k} 分 = {v}" for k, v in sorted(rubric["scale"].items(), reverse=True))
@@ -233,8 +257,25 @@ def stage_panels(stage, rubric):
     return panels
 
 
+def read_text_file(path):
+    """按 BOM / UTF-8 / GB18030 解码；二进制文件（含 NUL 字节，如 docx、pdf）直接报错，不把乱码送进模型。"""
+    raw = Path(path).read_bytes()
+    for bom, enc in ((b"\xef\xbb\xbf", "utf-8-sig"), (b"\xff\xfe", "utf-16"), (b"\xfe\xff", "utf-16")):
+        if raw.startswith(bom):
+            return raw.decode(enc).replace("\r\n", "\n")
+    if b"\x00" in raw:
+        raise ValueError(f"{Path(path).name} 不是文本文件，请转成 .md / .txt 再提交")
+    for enc in ("utf-8", "gb18030"):
+        try:
+            return raw.decode(enc).replace("\r\n", "\n")
+        except UnicodeDecodeError:
+            pass
+    raise ValueError(f"{Path(path).name} 的编码无法识别，请另存为 UTF-8")
+
+
 def file_to_text_block(path):
-    text = Path(path).read_text(errors="replace")
+    # 材料里以 ===== 开头的行会被读成文件边界，改成全角，防止伪造「另一份文件」（提示词注入）
+    text = re.sub(r"^=====", "＝＝＝＝＝", read_text_file(path), flags=re.M)
     return {"type": "text", "text": f"\n===== 文件：{Path(path).name} =====\n{text}"}
 
 
@@ -255,7 +296,7 @@ def image_size(path):
 
 def build_user_content(files, context, transcript, frames, platform_hint, tmpdir):
     content = [{"type": "text", "text": "以下是待评审材料。"}]
-    tech = None
+    techs = {}
     for c in context or []:
         if Path(c).suffix.lower() in IMAGE_EXT:
             content.append({"type": "text", "text": f"\n【参考图片：{Path(c).name}（如产品原图、品牌规范），用于比对一致性】"})
@@ -269,11 +310,16 @@ def build_user_content(files, context, transcript, frames, platform_hint, tmpdir
             content.append({"type": "text", "text": f"\n===== 图片：{Path(f).name}（程序测量尺寸：{image_size(f)}）====="})
             content.append(image_block(f))
         elif ext in VIDEO_EXT:
-            tech = probe_video(f)
+            info = probe_video(f)
+            if "错误" in info:
+                raise ValueError(f"{Path(f).name}：{info['错误']}")
+            techs[Path(f).name] = info
             content.append({"type": "text", "text": f"\n===== 成片：{Path(f).name} =====\n【程序测量的技术参数】\n"
-                            + json.dumps(tech, ensure_ascii=False, indent=2)
+                            + json.dumps(info, ensure_ascii=False, indent=2)
                             + f"\n【平台参考】{platform_hint}"})
-            for t, img in extract_frames(f, tech.get("时长(秒)", 0), frames, tmpdir):
+            sub = Path(tmpdir) / f"v{len(techs)}"  # 每个视频单独目录，同名帧不互相覆盖
+            sub.mkdir(exist_ok=True)
+            for t, img in extract_frames(f, info.get("时长(秒)", 0), frames, sub):
                 content.append({"type": "text", "text": f"关键帧 @ {t:.2f}s"})
                 content.append(image_block(img))
         else:
@@ -281,26 +327,38 @@ def build_user_content(files, context, transcript, frames, platform_hint, tmpdir
     if transcript:
         content.append({"type": "text", "text": "\n【台词/字幕文本】"})
         content.append(file_to_text_block(transcript))
+    # 一个视频时直接返回它的参数；多个视频时按文件名分开，不互相覆盖
+    tech = None if not techs else next(iter(techs.values())) if len(techs) == 1 else techs
     return content, tech
 
 
 # ---------- 调用与聚合 ----------
+
+def _try_lock(f):
+    """非阻塞独占锁，拿不到抛 OSError。Linux 用 flock，Windows 用 msvcrt（锁文件第一个字节）。"""
+    try:
+        import fcntl
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except ImportError:
+        import msvcrt
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+
 
 class call_slot:
     """跨进程限流：同一台机器上所有评审任务合计最多 REVIEW_MAX_CALLS 个模型调用同时进行（默认 10）。
     网站每个任务是独立进程、panel 模式一个任务又会并发多位评审员，接口网关按 Key 限制并发（约 15 个），不限会被 429。"""
 
     def __enter__(self):
-        import fcntl
         import random
         n = max(1, int(env_value("REVIEW_MAX_CALLS") or 10))
         locks = HERE / ".call-slots"
         locks.mkdir(exist_ok=True)
         while True:
             for i in random.sample(range(n), n):
-                f = open(locks / f"slot{i}", "w")
+                f = open(locks / f"slot{i}", "a+b")
                 try:
-                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    _try_lock(f)
                     self.f = f
                     return self
                 except OSError:
@@ -309,6 +367,29 @@ class call_slot:
 
     def __exit__(self, *exc):
         self.f.close()  # 关闭即释放锁；进程异常退出时系统也会释放
+
+
+class BadOutput(ValueError):
+    """模型返回了，但内容不能用：choices 为空、content 为空、没有 JSON 对象、缺 dimensions / redlines。"""
+
+
+def parse_output(resp):
+    try:
+        text = resp["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise BadOutput(f"响应结构不完整：{str(resp)[:200]}")
+    if not isinstance(text, str) or not text.strip():
+        raise BadOutput("模型返回了空内容")
+    # 从每个 { 依次尝试：模型在 JSON 前的说明文字里也可能出现 {
+    dec = json.JSONDecoder(strict=False)
+    for m in re.finditer(r"\{", text):
+        try:
+            obj = dec.raw_decode(text, m.start())[0]
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and isinstance(obj.get("dimensions"), list) and isinstance(obj.get("redlines"), list):
+            return obj
+    raise BadOutput(f"输出里没有包含 dimensions 和 redlines 的 JSON 对象：{text[:200]}")
 
 
 def call_model(key, model, system, content, effort, retries=3):
@@ -326,9 +407,9 @@ def call_model(key, model, system, content, effort, retries=3):
                                          headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
             with call_slot():
                 resp = json.loads(urllib.request.urlopen(req, timeout=600).read())
-            text = resp["choices"][0]["message"]["content"]
-            return json.JSONDecoder(strict=False).raw_decode(text[text.find("{"):])[0], resp.get("usage", {})
-        except (urllib.error.URLError, http.client.HTTPException, ConnectionError, TimeoutError, json.JSONDecodeError, KeyError) as e:
+            usage = resp.get("usage", {}) if isinstance(resp, dict) else {}
+            return parse_output(resp), usage
+        except (urllib.error.URLError, http.client.HTTPException, ConnectionError, TimeoutError, json.JSONDecodeError, BadOutput) as e:
             detail = e.read().decode()[:300] if isinstance(e, urllib.error.HTTPError) else e
             if isinstance(e, urllib.error.HTTPError) and (e.code in (401, 402) or "Insufficient Balance" in str(detail)):
                 raise RuntimeError(f"API 鉴权或余额问题，停止重试：{detail}")
@@ -349,49 +430,111 @@ def call_model(key, model, system, content, effort, retries=3):
                 raise RuntimeError(f"评审模型 {model} 暂时不可用（接口上游账号用尽），请换一个模型")
             attempt += 1
             print(f"  第 {attempt} 次调用失败：{detail}", file=sys.stderr)
-            time.sleep(2 ** attempt)
+            if attempt < retries:
+                time.sleep(2 ** (attempt - 1))
     raise RuntimeError("模型调用连续失败")
+
+
+def parse_score(v):
+    """1–5 的整数分：接受 4、4.0、"4"、"4.0"；小数、越界、文字分返回 None（转人审，不静默计入或丢弃）。"""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, str):
+        try:
+            v = float(v.strip())
+        except ValueError:
+            return None
+    if isinstance(v, (int, float)) and float(v).is_integer() and 1 <= v <= 5:
+        return int(v)
+    return None
+
+
+def parse_hit(v):
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes", "是", "命中")
+    return v is True or (isinstance(v, (int, float)) and not isinstance(v, bool) and v == 1)
+
+
+# 框架文档 6.3：成片只能从关键帧和测量值推断时间维度，画面质量（V3）与声音质量（V4）的结论必须人审
+ALWAYS_HUMAN = {"video": ("V3", "V4")}
+REJECT_REVIEW = "驳回复核"  # 框架文档第 5 节：机审驳回转法务 / 品牌复核
 
 
 def aggregate(stage, rubric, runs):
     s = rubric["stages"][stage]
     rules = rubric["verdict_rules"]
+    runs = [r if isinstance(r, dict) else {} for r in runs]
+    reasons = {}  # 需人审的项 → 原因
+
+    def flag(k, why):
+        reasons.setdefault(k, why)
+
     dims = []
     for d in s["dimensions"]:
-        per_run = [next((x for x in r["dimensions"] if x.get("id") == d["id"]), None) for r in runs]
-        scores = [int(x["score"]) for x in per_run if x and str(x.get("score", "")).isdigit()]
-        best = per_run[0] or {}
-        dims.append({**d, "scores": scores,
-                     "mean": round(statistics.mean(scores), 2) if scores else None,
+        per_run = [next((x for x in r.get("dimensions") or [] if isinstance(x, dict) and x.get("id") == d["id"]), None) for r in runs]
+        parsed = [parse_score(x.get("score")) if x else None for x in per_run]
+        scores = [p for p in parsed if p is not None]
+        mean = round(statistics.mean(scores), 2) if scores else None
+        # 证据取分数最接近均分的那次采样，避免与均分矛盾（如 3 次里只有 1 次给了 1 分时引用那次的证据）
+        cands = [(x, p) for x, p in zip(per_run, parsed) if x and p is not None]
+        best = min(cands, key=lambda c: abs(c[1] - mean))[0] if cands else next((x for x in per_run if x), {})
+        if len(scores) < len(runs):
+            bad = len([x for x in per_run if x]) - len(scores)
+            flag(d["id"], f"{len(runs) - len(scores)}/{len(runs)} 次采样没有有效分数" + (f"（{bad} 次不是 1–5 的整数）" if bad else ""))
+        dims.append({**d, "scores": scores, "mean": mean,
                      "spread": max(scores) - min(scores) if scores else None,
                      "evidence": best.get("evidence", ""),
                      "issues": best.get("issues", []), "suggestions": best.get("suggestions", [])})
+        if scores and dims[-1]["spread"] >= 2:
+            flag(d["id"], f"多次采样分歧 {dims[-1]['spread']} 分")
+
     redlines = []
     for i, text in enumerate(s["redlines"]):
         rid = f"R{i + 1}"
-        hits = [x for r in runs for x in r.get("redlines", []) if x.get("id") == rid]
-        n_hit = sum(1 for x in hits if x.get("hit") is True)
+        per_run = [[x for x in r.get("redlines") or [] if isinstance(x, dict) and x.get("id") == rid] for r in runs]
+        hits = [x for xs in per_run for x in xs]
+        n_hit = sum(1 for xs in per_run if any(parse_hit(x.get("hit")) for x in xs))  # 同一次采样重复列出只算一票
+        n_judged = sum(1 for xs in per_run if xs)
         status = "命中" if n_hit * 2 > len(runs) else "疑似（需人审）" if n_hit else "未命中"
-        ev = next((x.get("evidence", "") for x in hits if x.get("hit")), hits[0].get("evidence", "") if hits else "")
+        ev = next((x.get("evidence", "") for x in hits if parse_hit(x.get("hit"))), hits[0].get("evidence", "") if hits else "")
         redlines.append({"id": rid, "text": text, "status": status, "hits": f"{n_hit}/{len(runs)}", "evidence": ev})
+        if status == "命中":
+            flag(rid, "命中红线，需法务 / 品牌确认")
+        elif n_hit:
+            flag(rid, f"只有 {n_hit}/{len(runs)} 次采样判命中")
+        elif n_judged < len(runs):
+            flag(rid, f"{len(runs) - n_judged}/{len(runs)} 次采样没有判断这条红线")
 
+    complete = all(d["mean"] is not None for d in dims)
     scored = [d for d in dims if d["mean"] is not None]
-    total = round(sum(d["mean"] * d["weight"] for d in scored) / sum(d["weight"] for d in scored), 2) if scored else 0
-    min_dim = min((d["mean"] for d in scored), default=0)
+    # 总分始终按全部权重计算：缺失维度不能靠重新归一「藏掉」；缺维度时只出驳回或无法判定，不出通过
+    total = round(sum(d["mean"] * d["weight"] for d in scored) / sum(d["weight"] for d in dims), 2) if scored else None
+    min_dim = min((d["mean"] for d in scored), default=None)
     if any(r["status"] == "命中" for r in redlines):
         verdict = "驳回（命中红线）"
+    elif not complete:
+        verdict = "无法判定（评审输出不完整）"
     elif total >= rules["pass"]["min_score"] and min_dim >= rules["pass"]["min_dimension"]:
         verdict = "通过"
     elif total >= rules["revise"]["min_score"] and min_dim >= rules["revise"]["min_dimension"]:
         verdict = "修改后通过"
     else:
         verdict = "驳回"
-    needs_human = [d["id"] for d in dims if (d["spread"] or 0) >= 2] + \
-                  [r["id"] for r in redlines if r["status"].startswith("疑似")]
+    for k in ALWAYS_HUMAN.get(stage, ()):
+        flag(k, "只能从关键帧和测量值推断，结论必须人审")
+    if verdict.startswith("驳回"):
+        flag(REJECT_REVIEW, "机审驳回，需法务 / 品牌复核")
+
+    # 总评与修改建议取总分最接近聚合总分的那次采样（与均分一致的多数意见）
+    def run_total(r):
+        m = {x.get("id"): parse_score(x.get("score")) for x in r.get("dimensions") or [] if isinstance(x, dict)}
+        got = [(m[d["id"]], d["weight"]) for d in s["dimensions"] if m.get(d["id"]) is not None]
+        return sum(a * w for a, w in got) / sum(w for _, w in got) if got else None
+    rep = min(runs, key=lambda r: abs(run_total(r) - total) if run_total(r) is not None and total is not None else 99) if runs else {}
     return {"stage": s["name"], "total": total, "min_dimension": min_dim, "verdict": verdict,
-            "needs_human_review": needs_human, "dimensions": dims, "redlines": redlines,
-            "highlights": runs[0].get("highlights", []), "top_fixes": runs[0].get("top_fixes", []),
-            "summary": runs[0].get("summary", "")}
+            "needs_human_review": list(reasons), "review_reasons": reasons, "dimensions": dims, "redlines": redlines,
+            "highlights": rep.get("highlights", []), "top_fixes": rep.get("top_fixes", []),
+            "summary": rep.get("summary", "")}
 
 
 def render_markdown(result, tech, args, usage):
@@ -400,16 +543,29 @@ def render_markdown(result, tech, args, usage):
          f"- 模型：{args.model} × {args.runs} 次采样" + ("（分维度评审团：" + "、".join(p["name"] for p in result["panels"]) + "）" if result.get("panels") else "") + f" · {datetime.now():%Y-%m-%d %H:%M}",
          f"- **结论：{result['verdict']}** · 加权总分 **{result['total']}** / 5 · 最低维度 {result['min_dimension']}"]
     if result["needs_human_review"]:
-        L.append(f"- ⚠ 需人工复核：{', '.join(result['needs_human_review'])}（多次采样分歧 ≥ 2 分或疑似红线）")
+        reasons = result.get("review_reasons") or {}
+        L.append("- ⚠ 需人工复核：" + "；".join(f"{k}（{reasons[k]}）" if k in reasons else k for k in result["needs_human_review"]))
     L += ["", f"> {result['summary']}", ""]
+
+    def cell(v):  # 表格单元格：转义竖线、换行改成 <br>
+        return str(v).replace("|", "\\|").replace("\r\n", "<br>").replace("\n", "<br>")
+
+    def value(v):
+        if isinstance(v, list):
+            return ", ".join(map(str, v)) or "无"
+        return "无" if v is None or v == "" else v
+
     if tech:
-        L += ["## 技术参数（程序测量）", "", "| 指标 | 值 |", "|---|---|"]
-        L += [f"| {k} | {', '.join(v) if isinstance(v, list) else v or '无'} |" for k, v in tech.items()]
-        L.append("")
+        # 多个视频时 tech 是 {文件名: 参数}
+        groups = tech.items() if all(isinstance(v, dict) for v in tech.values()) else [(None, tech)]
+        for name, t in groups:
+            L += [f"## 技术参数（程序测量）{'：' + name if name else ''}", "", "| 指标 | 值 |", "|---|---|"]
+            L += [f"| {cell(k)} | {cell(value(v))} |" for k, v in t.items()]
+            L.append("")
     L += ["## 红线检查", "", "| ID | 红线 | 结果 | 命中次数 | 证据/疑点 |", "|---|---|---|---|---|"]
-    L += [f"| {r['id']} | {r['text']} | {r['status']} | {r['hits']} | {r['evidence']} |" for r in result["redlines"]]
+    L += [f"| {r['id']} | {cell(r['text'])} | {r['status']} | {r['hits']} | {cell(r['evidence'])} |" for r in result["redlines"]]
     L += ["", "## 维度评分", "", "| ID | 维度 | 权重 | 均分 | 各次得分 |", "|---|---|---|---|---|"]
-    L += [f"| {d['id']} | {d['name']} | {int(d['weight'] * 100)}% | {d['mean']} | {d['scores']} |" for d in result["dimensions"]]
+    L += [f"| {d['id']} | {cell(d['name'])} | {round(d['weight'] * 100)}% | {d['mean']} | {d['scores']} |" for d in result["dimensions"]]
     L += ["", "## 优先修改", ""] + [f"{i + 1}. {x}" for i, x in enumerate(result["top_fixes"])]
     L += ["", "## 亮点", ""] + [f"- {x}" for x in result["highlights"]]
     L += ["", "## 维度详情", ""]
@@ -418,6 +574,10 @@ def render_markdown(result, tech, args, usage):
         L += [f"- 问题：{x}" for x in d["issues"]] + [f"- 建议：{x}" for x in d["suggestions"]] + [""]
     L += ["---", f"Token 用量：{usage}"]
     return "\n".join(L)
+
+
+def load_rubric(path=HERE / "rubrics.json"):
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 DEFAULT_PLATFORM_HINT = "短视频信息流（抖音/视频号），竖屏 9:16 1080x1920，响度参考 -14～-16 LUFS，真峰值 ≤ -1 dBTP"
@@ -446,7 +606,7 @@ def evaluate(stage, files, context=None, transcript=None, runs=3, model=None, ef
     """供批量调用：返回 {result, tech, raw_runs, usage, model, mode}。"""
     key = key or load_api_key()
     model = model or default_model()
-    rubric = json.loads(Path(rubric_path).read_text())
+    rubric = load_rubric(rubric_path)
     if mode == "panel":
         panels = stage_panels(stage, rubric)
         calls = [(r, p, build_system_prompt(stage, rubric, p)) for r in range(runs) for p in panels]
@@ -483,6 +643,10 @@ def main():
     ap.add_argument("--rubric", default=str(HERE / "rubrics.json"))
     ap.add_argument("--out", default=str(HERE / "reports"))
     args = ap.parse_args()
+    if args.runs < 1:
+        ap.error("--runs 至少为 1")
+    if args.frames < 0:
+        ap.error("--frames 不能为负数")
 
     args.model = args.model or default_model()
     print(f"[{args.stage}] {args.mode} · {args.runs} 次 · {args.model} …", file=sys.stderr)
@@ -493,8 +657,8 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     stem = f"{args.stage}_{Path(args.files[0]).stem}_{datetime.now():%Y%m%d_%H%M%S}"
-    (out / f"{stem}.json").write_text(json.dumps({"result": result, "tech": tech, "raw_runs": runs}, ensure_ascii=False, indent=2))
-    (out / f"{stem}.md").write_text(render_markdown(result, tech, args, usage))
+    (out / f"{stem}.json").write_text(json.dumps({"result": result, "tech": tech, "raw_runs": runs}, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out / f"{stem}.md").write_text(render_markdown(result, tech, args, usage), encoding="utf-8")
     print(f"结论：{result['verdict']} · 总分 {result['total']} · 报告：{out / stem}.md")
 
 

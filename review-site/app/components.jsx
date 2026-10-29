@@ -46,7 +46,7 @@ export function ReviewResult({ ev, expect }) {
         </div>
         {r.summary && <p>{r.summary}</p>}
         {r.needs_human_review?.length > 0 && (
-          <div className="note">需人工复核：{r.needs_human_review.join("、")}（多次采样分歧 ≥ 2 分，或红线只在少数采样中命中）</div>
+          <div className="note">需人工复核：{r.needs_human_review.map((k) => (r.review_reasons?.[k] ? `${k}（${r.review_reasons[k]}）` : k)).join("；")}</div>
         )}
       </div>
 

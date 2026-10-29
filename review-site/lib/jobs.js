@@ -4,12 +4,14 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { ROOT, SITE, STAGES, reviewEnv } from "./data";
 import { ApiError, serializeReview } from "./api";
+import { checkUrl, safeFetch } from "./ssrf";
 
 // 在线评审任务：每个任务一个目录，状态落盘；进程内排队，同一时间只跑 MAX_RUNNING 个（每个约 100MB）
 export const JOBS = path.join(SITE, "data", "jobs");
 const MAX_RUNNING = Number(process.env.MAX_RUNNING || 2);
 export const PYTHON = process.env.PYTHON || path.join(ROOT, ".venv", "bin", "python");
 export const MAX_BYTES = 150 * 1024 * 1024;
+export const MAX_TEXT_BYTES = 10 * 1024 * 1024;
 const VIDEO_RE = /\.(mp4|mov|webm|m4v|mkv)$/i;
 const ALLOWED_EXT = /\.(md|markdown|txt|csv|srt|json|png|jpe?g|webp|gif|mp4|mov|webm|m4v|mkv)$/i;
 
@@ -55,7 +57,23 @@ const safeName = (n, i) => {
  * input: { stage, files:[{name, data:Buffer}], context:[{name,data}], content, context_text, transcript,
  *          runs, mode, model, effort, platform_hint, title, callback_url }
  */
-export function createReview(input) {
+// 限流（令牌桶，整站共用）：最多连续提交 RATE_LIMIT_BURST 个，之后每分钟恢复 RATE_LIMIT_PER_MINUTE 个。每个提交都会调用付费模型
+const RATE_BURST = Number(process.env.RATE_LIMIT_BURST || 20);
+const RATE_PER_MS = Number(process.env.RATE_LIMIT_PER_MINUTE || 30) / 60000;
+
+function rateLimit() {
+  const now = Date.now();
+  const b = (Q.bucket ||= { tokens: RATE_BURST, at: now });
+  b.tokens = Math.min(RATE_BURST, b.tokens + (now - b.at) * RATE_PER_MS);
+  b.at = now;
+  if (b.tokens < 1) {
+    const retry = Math.ceil((1 - b.tokens) / RATE_PER_MS / 1000);
+    throw new ApiError(429, "rate_limited", `提交过于频繁，请 ${retry} 秒后重试`, { retry_after: retry });
+  }
+  b.tokens -= 1;
+}
+
+export async function createReview(input) {
   recover();
   const { stage } = input;
   if (!STAGES.includes(stage)) throw new ApiError(400, "invalid_stage", `stage 必须是 ${STAGES.join(" / ")} 之一`);
@@ -70,6 +88,10 @@ export function createReview(input) {
   }
   const total = [...files, ...ctxFiles].reduce((s, f) => s + f.data.length, 0);
   if (total > MAX_BYTES) throw new ApiError(413, "too_large", "文件合计超过 150MB，请压缩成片或抽取关键片段");
+  // 文本字段同样落盘：单独限 MAX_TEXT_BYTES，不挤占文件的 150MB
+  if (Buffer.byteLength(content) + Buffer.byteLength(ctxText) + Buffer.byteLength(transcript) > MAX_TEXT_BYTES) {
+    throw new ApiError(413, "too_large", "content / context / transcript 文本合计超过 10MB");
+  }
   if (stage === "video" && !files.some((f) => VIDEO_RE.test(f.name))) {
     throw new ApiError(400, "missing_video", "成片评审需要一个视频文件（mp4/mov/webm/m4v/mkv）");
   }
@@ -89,6 +111,9 @@ export function createReview(input) {
   if (!["off", "low", "high", "max"].includes(effort)) throw new ApiError(400, "invalid_effort", "effort 必须是 off（不思考）/ low / high / max");
   const cb = (input.callback_url || "").trim();
   if (cb && !/^https?:\/\/[^\s]+$/i.test(cb)) throw new ApiError(400, "invalid_callback_url", "callback_url 必须是 http(s) 地址");
+  // 域名解析失败时先放行，回调时还会再查一次
+  if (cb && !(await checkUrl(cb, { resolveFailOpen: true }))) throw new ApiError(400, "invalid_callback_url", "callback_url 不能指向内网、回环或保留地址");
+  rateLimit();
 
   const id = `${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${crypto.randomBytes(4).toString("hex")}`;
   const dir = path.join(JOBS, id);
@@ -143,7 +168,8 @@ async function notify(id) {
   const body = JSON.stringify(serializeReview(j));
   for (let i = 0; i < 3; i++) {
     try {
-      const r = await fetch(j.job.callback_url, { method: "POST", headers: { "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(10000) });
+      const r = await safeFetch(j.job.callback_url, { method: "POST", headers: { "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(10000) },
+        () => { throw new Error("回调地址指向内网、回环或保留地址，已拒绝"); });
       fs.appendFileSync(path.join(JOBS, id, "log.txt"), `\n[callback] ${j.job.callback_url} → HTTP ${r.status}\n`);
       if (r.ok) return;
     } catch (e) {
@@ -162,17 +188,24 @@ function pump() {
     write(dir, "status.json", { ...st, state: "running", started: Date.now() });
     const log = fs.openSync(path.join(dir, "log.txt"), "a");
     const p = spawn(PYTHON, [path.join(SITE, "worker", "run_job.py"), dir], { stdio: ["ignore", log, log] });
-    p.on("exit", (code) => {
-      fs.closeSync(log);
+    let ended = false;
+    const finish = (why) => {
+      if (ended) return; // spawn 失败时 error 之后还可能有 close
+      ended = true;
+      try {
+        fs.closeSync(log);
+      } catch {}
       Q.running.delete(id);
       const cur = read(dir, "status.json") || {};
       if (cur.state === "running") {
         const tail = (fs.readFileSync(path.join(dir, "log.txt"), "utf8").trim().split("\n").pop() || "").slice(0, 300);
-        write(dir, "status.json", { ...cur, state: "error", error: `评审进程异常退出（${code}）：${tail}`, finished: Date.now() });
+        write(dir, "status.json", { ...cur, state: "error", error: tail ? `${why}：${tail}` : why, finished: Date.now() });
       }
       notify(id);
       pump();
-    });
+    };
+    p.on("error", (e) => finish(`评审进程无法启动（${e.code || e.message}），请检查 PYTHON 配置`));
+    p.on("exit", (code) => finish(`评审进程异常退出（${code}）`));
   }
 }
 

@@ -41,7 +41,7 @@ Authorization: Bearer <API Token>
 X-API-Key: <API Token>
 ```
 
-Token 由管理员发放，保存在服务器 `review-site/.env.local` 的 `SITE_API_TOKEN` 中，修改后需重启服务。网页登录用的 Basic Auth（任意用户名 + 站点密码）对接口同样有效。
+Token 由管理员发放，保存在服务器 `review-site/.env.local` 的 `SITE_API_TOKEN` 中，修改后需重启服务。网页登录用的 Basic Auth（任意用户名 + 站点密码）对接口同样有效；用 Basic Auth 做写操作（POST / PUT / PATCH / DELETE）时，跨站来源（`Origin` 与站点不同或 `Sec-Fetch-Site: cross-site`）会被拒绝（403 `forbidden`），Bearer / X-API-Key 不受影响。`SITE_PASSWORD` 与 `SITE_API_TOKEN` 都没配置时，站点拒绝所有请求。
 
 未授权时返回：
 
@@ -70,24 +70,31 @@ HTTP/1.1 401
 | 400 | `missing_video` | 成片评审没有视频文件 |
 | 400 | `unexpected_video` | 视频文件提交到了非 video 关卡 |
 | 400 | `unsupported_file` | 文件扩展名不支持 |
-| 400 | `invalid_runs` / `invalid_mode` / `invalid_model` / `invalid_effort` / `invalid_callback_url` | 参数取值错误 |
+| 400 | `invalid_runs` / `invalid_mode` / `invalid_model` / `invalid_effort` | 参数取值错误 |
+| 400 | `invalid_callback_url` | callback_url 不是 http(s) 地址，或指向内网、回环、保留地址 |
+| 400 | `invalid_status` | 任务列表的 status 筛选取值错误 |
 | 400 | `invalid_body` | JSON 格式错误或字段类型不对 |
+| 400 | `invalid_file_url` | `files[].url` 不是 http(s) 地址，或指向内网、回环、保留地址（含跳转后的地址） |
 | 400 | `file_download_failed` | 按 url 下载文件失败 |
 | 400 | `invalid_name` / `invalid_split` / `invalid_workers` / `no_cases` | 基准测试参数错误 |
 | 401 | `unauthorized` | 缺少或错误的 Token |
+| 403 | `forbidden` | 用 Basic Auth 的跨站写请求 |
 | 404 | `not_found` | 任务、关卡、轮次或用例不存在 |
 | 409 | `not_ready` | 评审未完成，报告尚未生成 |
 | 409 | `job_running` | 评审中的任务不能删除 |
 | 409 | `run_in_progress` | 已有基准测试轮次在运行 |
-| 413 | `too_large` | 文件合计超过 150MB |
-| 415 | `unsupported_media_type` | Content-Type 不是 JSON 或 multipart |
+| 413 | `too_large` | 文件合计超过 150MB、文本字段合计超过 10MB、请求体超过 210MB，或 url 下载超过 150MB |
+| 415 | `unsupported_media_type` | Content-Type 不是 JSON 或 multipart（启动基准测试只接受 JSON） |
+| 429 | `rate_limited` | 提交过于频繁，响应里的 retry_after 为建议等待秒数 |
 | 500 | `internal_error` | 服务内部错误 |
 
 ### 限制
 
 | 项目 | 限制 |
 |---|---|
-| 单次提交的文件合计 | 150MB |
+| 单次提交的文件合计 | 150MB；content / context / transcript 文本合计 10MB；JSON 请求体整体不超过 210MB |
+| 提交频率 | 整站最多连续提交 20 个评审，之后每分钟恢复 30 个（`RATE_LIMIT_BURST` / `RATE_LIMIT_PER_MINUTE` 可调），超出返回 429 |
+| `files[].url` 与 `callback_url` | 只能是公网 http(s) 地址；内网服务需管理员加入 `SSRF_ALLOW_HOSTS` |
 | 支持的文件类型 | 文本 `.md .txt .csv .srt .json`；图片 `.png .jpg .jpeg .webp .gif`；视频 `.mp4 .mov .webm .m4v .mkv` |
 | 并发评审 | 同时最多 2 个任务，其余排队（按提交顺序） |
 | 同步等待 `wait` | 最长 300 秒 |
@@ -354,7 +361,8 @@ DELETE /api/v1/reviews/{id}
     "verdict": "驳回（命中红线）",
     "total": 3.5,
     "min_dimension": 2,
-    "needs_human_review": [],
+    "needs_human_review": ["R2", "驳回复核"],
+    "review_reasons": { "R2": "命中红线，需法务 / 品牌确认", "驳回复核": "机审驳回，需法务 / 品牌复核" },
     "summary": "洞察真实、钩子有效、执行可行，但创意偏常见模板，品牌融入偏弱；“全国销量第一，医院指定专用”触及极限用语和医疗背书红线……",
     "top_fixes": ["删除“全国销量第一”“医院指定专用”，改为可举证的表述……", "……"],
     "highlights": ["……"],
@@ -390,10 +398,11 @@ DELETE /api/v1/reviews/{id}
 
 | 字段 | 说明 |
 |---|---|
-| `verdict` | 结论：`通过` / `修改后通过` / `驳回` / `驳回（命中红线）`，规则见下表 |
-| `total` | 加权总分，1–5 |
-| `min_dimension` | 最低的维度分 |
-| `needs_human_review` | 需要人工复核的维度或红线 ID（多次采样分差 ≥ 2，或红线只在少数采样中命中） |
+| `verdict` | 结论：`通过` / `修改后通过` / `驳回` / `驳回（命中红线）` / `无法判定（评审输出不完整）`，规则见下表 |
+| `total` | 加权总分，1–5；模型没有给出任何有效分数时为 `null` |
+| `min_dimension` | 最低的维度分；同上可为 `null` |
+| `needs_human_review` | 需要人工复核的项：维度 ID、红线 ID，或 `驳回复核`。原因见 `review_reasons` |
+| `review_reasons` | `needs_human_review` 每一项的原因，如 `{"V3": "只能从关键帧和测量值推断，结论必须人审"}` |
 | `summary` | 100 字以内的总体评价 |
 | `top_fixes` | 按优先级排序的修改建议 |
 | `highlights` | 做得好的地方 |
@@ -408,6 +417,7 @@ DELETE /api/v1/reviews/{id}
 | 结论 | 条件 |
 |---|---|
 | 驳回（命中红线） | 任意红线状态为“命中” |
+| 无法判定（评审输出不完整） | 有维度在所有采样里都没有有效分数（缺失、小数、越界或文字）。总分按全部权重计算，缺失维度不重新归一 |
 | 通过 | 总分 ≥ 4.0，且所有维度 ≥ 3 |
 | 修改后通过 | 总分 ≥ 3.0，且所有维度 ≥ 2 |
 | 驳回 | 其余情况 |
@@ -418,6 +428,8 @@ DELETE /api/v1/reviews/{id}
 |---|---|---|
 | `命中` | 多数采样判定命中 | 是，直接驳回 |
 | `疑似（需人审）` | 少数采样判定命中 | 否，但会列入 `needs_human_review` |
+
+以下情况都会列入 `needs_human_review`：红线命中或疑似；有采样漏判某条红线；维度分数缺失或不是 1–5 的整数；多次采样分差 ≥ 2；成片的 V3（画面质量）、V4（声音质量）始终人审；结论为驳回时加 `驳回复核`（转法务 / 品牌）。
 | `未命中` | 所有采样都未命中 | 否 |
 
 `hits` 为命中次数与采样次数之比，如 `2/3`。
@@ -685,7 +697,7 @@ GET /api/v1/cases/{id}?no_text              不返回文本材料内容（只返
 }
 ```
 
-`/media/...` 下的文件地址支持 HTTP Range 请求，视频可以拖动进度。访问这些地址同样需要鉴权。
+`/media/...` 下的文件地址支持 HTTP Range 请求，视频可以拖动进度。访问这些地址同样需要鉴权。任务目录只开放上传的材料（`inputs/`）和 `report.md`。
 
 ## 系统
 

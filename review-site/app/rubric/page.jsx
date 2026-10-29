@@ -28,7 +28,7 @@ export default function Page() {
             </tbody>
           </table>
         </div>
-        <p className="faint">红线只在少数采样中命中时标为“疑似”，不直接驳回，转人工复核；同一维度多次采样分差 ≥ 2 分也转人工。</p>
+        <p className="faint">红线只在少数采样中命中时标为“疑似”，不直接驳回，转人工复核。以下也转人工：红线命中、维度分数缺失或无效、多次采样分差 ≥ 2 分、成片的画面质量与声音质量、机审驳回（转法务 / 品牌复核）。</p>
       </div>
 
       <nav className="row" aria-label="关卡">

@@ -8,7 +8,7 @@ mkdir -p data
 start() {
   if status >/dev/null; then echo "已在运行（PID $(cat $PIDFILE)）"; return; fi
   set -a; . ./.env.local; set +a
-  NODE_OPTIONS="--max-old-space-size=256" nohup node_modules/.bin/next start -p "$PORT" -H 0.0.0.0 >> data/server.log 2>&1 &
+  NODE_OPTIONS="--max-old-space-size=256" nohup node_modules/.bin/next start -p "$PORT" -H 127.0.0.1 >> data/server.log 2>&1 &
   echo $! > "$PIDFILE"
   echo "已启动 PID $! 端口 $PORT"
 }

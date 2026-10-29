@@ -1,4 +1,5 @@
 import path from "node:path";
+import { safeFetch } from "./ssrf";
 
 // /api/v1 公共工具：统一错误格式、分页、输入解析、结果序列化
 
@@ -39,20 +40,65 @@ export function page(sp, def = 20, max = 200) {
 }
 
 const MAX_URL_BYTES = 150 * 1024 * 1024;
+// 请求体上限：150MB 文件 base64 后约 200MB，再留 JSON 外壳的余量
+export const MAX_BODY_BYTES = 210 * 1024 * 1024;
 
 async function fetchFile(f, i) {
-  if (!/^https?:\/\//i.test(f.url)) throw new ApiError(400, "invalid_file_url", `files[${i}].url 必须是 http(s) 地址`);
+  if (typeof f.url !== "string" || !/^https?:\/\//i.test(f.url)) throw new ApiError(400, "invalid_file_url", `files[${i}].url 必须是 http(s) 地址`);
+  const blocked = () => {
+    throw new ApiError(400, "invalid_file_url", `files[${i}].url 不能指向内网、回环或保留地址（含跳转后的地址）`);
+  };
   let r;
   try {
-    r = await fetch(f.url, { signal: AbortSignal.timeout(120000) });
+    r = await safeFetch(f.url, { signal: AbortSignal.timeout(120000) }, blocked);
   } catch (e) {
+    if (e instanceof ApiError) throw e;
     throw new ApiError(400, "file_download_failed", `下载 ${f.url} 失败：${e.message}`);
   }
   if (!r.ok) throw new ApiError(400, "file_download_failed", `下载 ${f.url} 失败：HTTP ${r.status}`);
-  if (Number(r.headers.get("content-length") || 0) > MAX_URL_BYTES) throw new ApiError(413, "too_large", `${f.url} 超过 150MB`);
-  const data = Buffer.from(await r.arrayBuffer());
-  const name = f.name || decodeURIComponent(path.basename(new URL(f.url).pathname)) || `file_${i}`;
+  const tooLarge = () => new ApiError(413, "too_large", `${f.url} 超过 150MB`);
+  if (Number(r.headers.get("content-length") || 0) > MAX_URL_BYTES) {
+    await r.body?.cancel();
+    throw tooLarge();
+  }
+  // 没有 Content-Length（分块传输）时边读边计数，超过上限立即中止
+  const chunks = [];
+  let n = 0;
+  try {
+    for await (const c of r.body || []) {
+      n += c.length;
+      if (n > MAX_URL_BYTES) break;
+      chunks.push(c);
+    }
+  } catch (e) {
+    throw new ApiError(400, "file_download_failed", `下载 ${f.url} 失败：${e.message}`);
+  }
+  if (n > MAX_URL_BYTES) {
+    await r.body?.cancel().catch(() => {});
+    throw tooLarge();
+  }
+  const data = Buffer.concat(chunks);
+  const name = f.name || safeDecode(path.basename(new URL(f.url).pathname)) || `file_${i}`;
   return { name, data };
+}
+
+const safeDecode = (s) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
+
+// Buffer.from(..., "base64") 会静默丢弃非法字符，先严格校验（不用正则：200MB 的串会让正则引擎爆栈）
+function validBase64(s) {
+  const body = s.replace(/={1,2}$/, "");
+  if (body.length % 4 === 1 || (s.length !== body.length && s.length % 4 !== 0)) return false;
+  for (let i = 0; i < body.length; i++) {
+    const c = body.charCodeAt(i);
+    if (!((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 43 || c === 47)) return false;
+  }
+  return true;
 }
 
 async function jsonFiles(list, field) {
@@ -60,9 +106,12 @@ async function jsonFiles(list, field) {
   if (!Array.isArray(list)) throw new ApiError(400, "invalid_body", `${field} 必须是数组`);
   const out = [];
   for (const [i, f] of list.entries()) {
+    if (f && typeof f === "object" && f.name != null && typeof f.name !== "string") throw new ApiError(400, "invalid_body", `${field}[${i}].name 必须是字符串`);
     if (f?.content_base64) {
       if (!f.name) throw new ApiError(400, "invalid_body", `${field}[${i}] 缺少 name（需带扩展名，如 kv.png）`);
-      out.push({ name: f.name, data: Buffer.from(f.content_base64, "base64") });
+      const b64 = typeof f.content_base64 === "string" ? f.content_base64.replace(/\s+/g, "") : null;
+      if (b64 == null || !validBase64(b64)) throw new ApiError(400, "invalid_body", `${field}[${i}].content_base64 不是合法的 base64（不要带 data: 前缀）`);
+      out.push({ name: f.name, data: Buffer.from(b64, "base64") });
     } else if (f?.text != null) {
       out.push({ name: f.name || `${field}_${i + 1}.md`, data: Buffer.from(String(f.text)) });
     } else if (f?.url) {
@@ -74,11 +123,39 @@ async function jsonFiles(list, field) {
   return out;
 }
 
-const joinText = (v) => (Array.isArray(v) ? v.join("\n\n") : v || "");
+// 文本字段：字符串或字符串数组（数组按空行拼接）
+function textField(b, k) {
+  const v = b[k];
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (Array.isArray(v) && v.every((x) => typeof x === "string")) return v.join("\n\n");
+  throw new ApiError(400, "invalid_body", `${k} 必须是字符串或字符串数组`);
+}
+
+function strField(b, k) {
+  const v = b[k];
+  if (v == null) return undefined;
+  if (typeof v !== "string") throw new ApiError(400, "invalid_body", `${k} 必须是字符串`);
+  return v;
+}
+
+// 读完整个请求体，超过上限立即中止（不先整体读入内存再判断）
+async function readBody(req) {
+  if (Number(req.headers.get("content-length") || 0) > MAX_BODY_BYTES) throw new ApiError(413, "too_large", "请求体超过 210MB");
+  const chunks = [];
+  let n = 0;
+  for await (const c of req.body || []) {
+    n += c.length;
+    if (n > MAX_BODY_BYTES) throw new ApiError(413, "too_large", "请求体超过 210MB");
+    chunks.push(c);
+  }
+  return Buffer.concat(chunks);
+}
 
 // 评审提交：支持 multipart/form-data 与 application/json
 export async function readReviewInput(req) {
   const type = req.headers.get("content-type") || "";
+  if (Number(req.headers.get("content-length") || 0) > MAX_BODY_BYTES) throw new ApiError(413, "too_large", "请求体超过 210MB");
   if (type.includes("multipart/form-data")) {
     let form;
     try {
@@ -101,14 +178,17 @@ export async function readReviewInput(req) {
   if (type.includes("application/json")) {
     let b;
     try {
-      b = await req.json();
-    } catch {
+      b = JSON.parse((await readBody(req)).toString("utf8"));
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
       throw new ApiError(400, "invalid_body", "JSON 格式错误");
     }
+    if (!b || typeof b !== "object" || Array.isArray(b)) throw new ApiError(400, "invalid_body", "请求体必须是 JSON 对象");
     return {
       stage: b.stage, files: await jsonFiles(b.files, "files"), context: await jsonFiles(b.context_files, "context_files"),
-      content: joinText(b.content), context_text: joinText(b.context), transcript: joinText(b.transcript),
-      runs: b.runs, mode: b.mode, model: b.model, effort: b.effort, platform_hint: b.platform_hint, title: b.title, callback_url: b.callback_url, wait: b.wait,
+      content: textField(b, "content"), context_text: textField(b, "context"), transcript: textField(b, "transcript"),
+      runs: b.runs, mode: strField(b, "mode"), model: strField(b, "model"), effort: strField(b, "effort"),
+      platform_hint: strField(b, "platform_hint"), title: strField(b, "title"), callback_url: strField(b, "callback_url"), wait: b.wait,
     };
   }
   throw new ApiError(415, "unsupported_media_type", "Content-Type 需为 application/json 或 multipart/form-data");
@@ -120,7 +200,7 @@ export function serializeResult(ev, { raw = false } = {}) {
   if (!ev) return null;
   const r = ev.result;
   return {
-    verdict: r.verdict, total: r.total, min_dimension: r.min_dimension, needs_human_review: r.needs_human_review,
+    verdict: r.verdict, total: r.total, min_dimension: r.min_dimension, needs_human_review: r.needs_human_review, review_reasons: r.review_reasons || {},
     summary: r.summary, top_fixes: r.top_fixes, highlights: r.highlights, panels: r.panels || null,
     redlines: r.redlines.map((x) => ({ id: x.id, text: x.text, status: x.status, hits: x.hits, evidence: x.evidence })),
     dimensions: r.dimensions.map((d) => ({ id: d.id, name: d.name, weight: d.weight, score: d.mean, scores: d.scores, spread: d.spread, evidence: d.evidence, issues: d.issues, suggestions: d.suggestions })),

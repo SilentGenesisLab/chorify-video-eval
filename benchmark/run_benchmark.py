@@ -25,7 +25,7 @@ STAGES = ["creative", "storyboard", "asset", "video"]
 
 
 def load_labels(args):
-    rows = [json.loads(x) for x in (HERE / "dataset" / "labels.jsonl").read_text().splitlines() if x.strip()]
+    rows = [json.loads(x) for x in (HERE / "dataset" / "labels.jsonl").read_text(encoding="utf-8").splitlines() if x.strip()]
     if args.stages:
         rows = [r for r in rows if r["stage"] in args.stages]
     if args.scenarios:
@@ -63,7 +63,7 @@ def run_all(labels, args):
             done += 1
             try:
                 ev = f.result()
-                (out / f"{lab['case_id']}.json").write_text(json.dumps(ev, ensure_ascii=False, indent=1))
+                (out / f"{lab['case_id']}.json").write_text(json.dumps(ev, ensure_ascii=False, indent=1), encoding="utf-8")
                 r = ev["result"]
                 print(f"[{done}/{len(todo)}] {lab['case_id']}: {r['verdict']} {r['total']} ({ev['seconds']}s)", file=sys.stderr)
             except Exception as e:
@@ -83,10 +83,13 @@ def score(labels, args):
     for l in labels:
         f = out / f"{l['case_id']}.json"
         if f.exists():
-            res[l["case_id"]] = json.loads(f.read_text())
+            res[l["case_id"]] = json.loads(f.read_text(encoding="utf-8"))
     labs = {l["case_id"]: l for l in labels if l["case_id"] in res}
     if not labs:
         sys.exit("没有可评分的结果")
+    # 结果缺失要写进报告：本身没结果的用例，以及基准样本没结果、无法比较的变体
+    missing = sorted(l["case_id"] for l in labels if l["case_id"] not in res)
+    no_base = sorted(c for c, l in labs.items() if l["base_case_id"] and l["base_case_id"] not in res)
 
     def view(cid):
         r = res[cid]["result"]
@@ -108,8 +111,15 @@ def score(labels, args):
                "hits": ",".join(sorted(v["hits"])), "expected_redlines": ",".join(exp["redlines"]),
                "target": ",".join(exp["target"]), "delta_target": "", "delta_total": "", "pass": ""}
         ok = True
+        if exp.get("verdict_not") and any(v["verdict"].startswith(x) for x in exp["verdict_not"]):
+            ok = False
+            fails.append((cid, f"结论不应为 {'/'.join(exp['verdict_not'])}，实际 {v['verdict']}"))
         if kind == "redline":
             rec = set(exp["redlines"]) <= v["hits"]
+            extra = sorted(v["hits"] - set(exp["redlines"]))
+            agg[st]["红线用例额外命中（误报）"].append(bool(extra))
+            if extra:
+                fails.append((cid, f"额外命中了未注入的红线 {extra}"))
             agg[st]["红线召回（命中指定红线）"].append(rec)
             agg[st]["红线检出（命中任一红线）"].append(bool(v["hits"]))
             agg[st]["红线用例判驳回"].append(v["verdict"].startswith("驳回"))
@@ -130,13 +140,17 @@ def score(labels, args):
         if base and exp["target"]:
             t0 = exp["target"][0]
             bt, vt = base["dims"].get(t0), v["dims"].get(t0)
-            if bt is not None and vt is not None:
+            if bt is None or vt is None:
+                ok = False
+                fails.append((cid, f"目标维度 {t0} 没有有效分数（基准 {bt}，变体 {vt}）"))
+            else:
                 d = round(vt - bt, 2)
                 row["delta_target"] = d
                 if bt <= 1.5:
                     agg[st]["目标维度触底（无法再降，已排除）"].append(1)
                 else:
-                    hit = d <= -1 or any((v["dims"].get(t, 9) - base["dims"].get(t, 0)) <= -1 for t in exp["target"][1:])
+                    hit = d <= -1 or any(v["dims"].get(t) is not None and base["dims"].get(t) is not None
+                                         and v["dims"][t] - base["dims"][t] <= -1 for t in exp["target"][1:])
                     agg[st]["缺陷灵敏度（目标维度降 ≥1 分）"].append(hit)
                     agg[st]["目标维度平均变化"].append(d)
                     per_variant[(st, l["variant"])]["pass"].append(hit)
@@ -152,7 +166,7 @@ def score(labels, args):
         if base:
             row["delta_total"] = round(v["total"] - base["total"], 2)
         if kind == "invariance" and base:
-            inv = abs(v["total"] - base["total"]) <= 0.3
+            inv = abs(round(v["total"] - base["total"], 2)) <= 0.3  # 总分是两位小数，先舍入再比，避免 1.3-1.0=0.30000000000000004
             agg[st]["不变性（|Δ总分| ≤ 0.3）"].append(inv)
             agg[st]["不变性变体 Δ总分"].append(v["total"] - base["total"])
             per_variant[(st, l["variant"])]["pass"].append(inv)
@@ -201,6 +215,9 @@ def score(labels, args):
     for (st, var), d in sorted(per_variant.items(), key=lambda x: (STAGES.index(x[0][0]), x[0][1])):
         L.append(f"| {st} | {var} | {desc.get((st, var), '')} | {pct(sum(d['pass']), len(d['pass']))} |")
     L += ["", "## 未通过用例", ""] + [f"- `{c}`：{msg}" for c, msg in fails]
+    if missing or no_base:
+        L += ["", f"## 结果缺失（{len(missing)} 例没有结果，{len(no_base)} 例的基准样本没有结果）", ""]
+        L += [f"- `{c}`：没有结果文件" for c in missing] + [f"- `{c}`：基准 `{labs[c]['base_case_id']}` 没有结果，未参与比较" for c in no_base]
     L += ["", "## 指标说明", "",
           "- **红线召回**：注入了某条红线的用例中，评审器命中该红线的比例。目标 ≥ 90%。",
           "- **误报率**：未注入红线的用例中，评审器判定命中任一红线的比例。目标 ≤ 10%。",
@@ -209,7 +226,7 @@ def score(labels, args):
           "- **不变性**：只改格式或追加无信息套话，总分变化应 ≤ 0.3。用于检测冗长偏好和格式偏差。",
           "- **多次采样分歧**：同一用例多次评分的极差，用于衡量稳定性（需 --runs ≥ 2）。",
           "- 资产与成片用例为示意图和分镜动态预演，**绝对分数没有参考意义**，只看红线和相对变化。"]
-    (out / "report.md").write_text("\n".join(L) + "\n")
+    (out / "report.md").write_text("\n".join(L) + "\n", encoding="utf-8")
     summary = {"name": args.name, "model": args.model, "runs": args.runs, "cases": len(labs),
                "usage": dict(usage), "avg_seconds": round(statistics.mean(secs)),
                "passed": sum(r["pass"] for r in rows), "stages": stages,
@@ -217,9 +234,10 @@ def score(labels, args):
                "variants": [{"stage": st, "variant": var, "description": desc.get((st, var), ""),
                              "passed": sum(d["pass"]), "total": len(d["pass"])}
                             for (st, var), d in sorted(per_variant.items(), key=lambda x: (STAGES.index(x[0][0]), x[0][1]))],
-               "failures": [{"case_id": c, "reason": msg} for c, msg in fails], "rows": rows}
-    (out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1))
-    with open(out / "cases.csv", "w", newline="") as f:
+               "failures": [{"case_id": c, "reason": msg} for c, msg in fails], "rows": rows,
+               "missing": missing, "missing_base": no_base}
+    (out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
+    with open(out / "cases.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader()
         w.writerows(rows)
