@@ -1,0 +1,13 @@
+[
+ {
+  "round": "r1",
+  "ok": 48,
+  "failed": 0,
+  "skipped_by_budget": 1,
+  "estimated_cny": 10.14,
+  "balance_before": 160.45,
+  "balance_after": 154.1,
+  "actual_cny": 6.35,
+  "minutes": 23.1
+ }
+]

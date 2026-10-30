@@ -1,0 +1,27 @@
+{
+ "name": "fix_v2",
+ "round": "r1",
+ "sets": [
+  "v2"
+ ],
+ "families": [
+  "b9",
+  "b10",
+  "b11",
+  "e3",
+  "e4"
+ ],
+ "preset": null,
+ "stages": null,
+ "kinds": null,
+ "probe": null,
+ "cases": null,
+ "limit": null,
+ "runs": 3,
+ "model": "deepseek-flash",
+ "effort": "high",
+ "workers": 3,
+ "max_cost": 35.0,
+ "dry_run": false,
+ "data": "C:\\Users\\asus\\AppData\\Local\\Temp\\vr_bench\\src\\benchmark"
+}

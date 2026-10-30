@@ -57,3 +57,6 @@ tests/bench/probes/media/
 tests/bench/annotations/packets/**/*.mp4
 tests/bench/annotations/packets/**/*.png
 benchmark/annotation/材料/
+tests/bench/results/fix_key/run_spec.json
+tests/bench/results/fix_v2/r1/metrics.json
+tests/bench/results/fix_report.md
