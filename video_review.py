@@ -19,6 +19,7 @@
 """
 import argparse
 import base64
+import hashlib
 import http.client
 import json
 import mimetypes
@@ -28,6 +29,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -124,22 +126,79 @@ def probe_video(path):
         if m := re.search(r"Peak:\s+(-?[\d.]+|-inf) dBFS", summary):
             info["真峰值(dBTP)"] = m[1]
 
-    err = run_ffmpeg(["-i", str(path), "-an", "-vf", "blackdetect=d=0.2:pix_th=0.10,freezedetect=n=0.003:d=1.0", "-f", "null", "-"])
+    # 冻结要在原分辨率上测：缩小后噪点被抹平，静止字卡上的正常画面也会被当成冻结
+    err = run_ffmpeg(["-i", str(path), "-an", "-vf", "blackdetect=d=0.2:pix_th=0.10,freezedetect=n=0.003:d=0.5", "-f", "null", "-"])
     info["黑帧区间"] = [f"{a}s–{b}s" for a, b in re.findall(r"black_start:([\d.]+) black_end:([\d.]+)", err)]
-    info["冻结帧起点"] = [f"{t}s" for t in re.findall(r"freeze_start: ([\d.]+)", err)]
+    starts = re.findall(r"freeze_start: ([\d.]+)", err)
+    durs = [float(d) for d in re.findall(r"freeze_duration: ([\d.]+)", err)] + [None] * len(starts)  # 冻到结尾没有 duration
+    info["冻结帧起点"] = [f"{t}s" for t, d in zip(starts, durs) if d is None or d >= 1.0]
+    info["短静止(0.5–1秒)"] = [f"{round(float(t), 2)}s" for t, d in zip(starts, durs) if d is not None and d < 1.0]
+    info.update(picture_stats(path))
     return info
 
 
-def extract_frames(path, duration, n, outdir):
-    """前 3 秒每 0.5 秒一帧（看钩子），其余时长均匀抽 n 帧。"""
-    times = [t / 2 for t in range(0, 6) if t / 2 < duration]
+def picture_stats(path):
+    """画面统计（按 5fps、320 宽采样，30 秒成片约 1 秒）：模型看缩小后的关键帧分不出细的画质问题，由程序量出来。
+
+    - 模糊度：blurdetect 均值，越大越糊。清晰的成片约 4–5，高斯模糊 σ=6 约 7–10
+    - 亮度：Y 均值 0–255，过暗 < 40、过曝 > 210
+    - 场景切换：相邻帧变化大的时间点，用于抽帧
+    0.5–1 秒的短静止在 probe_video 里按原分辨率测。
+    """
+    err = run_ffmpeg(["-i", str(path), "-an", "-vf",
+                      "fps=5,scale=320:-2,blurdetect=block_width=16:block_height=16,"
+                      "signalstats,select='gte(scene,0)',metadata=mode=print", "-f", "null", "-"])
+    out = {}
+    if m := re.findall(r"blur mean: ([\d.]+)", err):
+        out["模糊度"] = round(float(m[-1]), 2)
+    if y := [float(x) for x in re.findall(r"signalstats\.YAVG=([\d.]+)", err)]:
+        out["平均亮度(0-255)"] = round(sum(y) / len(y), 1)
+    times = [float(x) for x in re.findall(r"pts_time:([\d.]+)", err)]
+    scores = [float(x) for x in re.findall(r"lavfi\.scene_score=([\d.]+)", err)]
+    # 前 0.5 秒不算：编码器起始帧常有跳变，且钩子段本来就每 0.5 秒一帧
+    out["场景切换(秒)"] = [round(t, 2) for t, s in zip(times, scores) if s >= SCENE_THRESHOLD and t >= 0.5]
+    return out
+
+
+SCENE_THRESHOLD = 0.05  # 5fps / 320 宽下的场景变化分；合成成片的硬切约 0.06–0.10，渐变不到 0.02
+
+
+MAX_FRAMES = 40  # 单个视频最多送给模型的帧数
+MAX_GAP = 1.0  # 3 秒后相邻两帧的最大间隔（秒），帧数到上限时放宽
+
+
+def frame_times(duration, n, scenes=()):
+    """抽帧时间表：前 3 秒每 0.5 秒一帧（看钩子）；3 秒后均匀 n 帧（段中点）+ 每个场景切换后 0.1 秒；
+    再在间隔超过 MAX_GAP 的地方补帧；尾帧 duration-0.1（CTA）。总数不超过 MAX_FRAMES，超了先删补帧、再删场景帧。"""
+    hook = [t / 2 for t in range(0, 6) if t / 2 < duration]
+    tail = max(duration - 0.1, 0)
+    base = []
     if duration > 3 and n > 0:
         step = (duration - 3) / n
-        times += [round(3 + step * (i + 0.5), 2) for i in range(n)]
-    tail = max(duration - 0.1, 0)
-    times.append(tail)  # 尾帧（CTA）
+        base = [round(3 + step * (i + 0.5), 2) for i in range(n)]
+    cuts = [round(min(s + 0.1, tail), 2) for s in scenes if 3 <= s < duration]
+    fixed = sorted(set(hook + base + [tail]))
+    room = max(MAX_FRAMES - len(fixed), 0)
+    if len(cuts) > room:  # 场景太多：均匀保留一部分
+        cuts = [cuts[round(i * (len(cuts) - 1) / max(room - 1, 1))] for i in range(room)] if room else []
+    times = sorted(set(fixed + cuts))
+    fill = []
+    if n > 0:
+        later = [t for t in times if t >= 2.5]
+        for a, b in zip(later, later[1:]):
+            k = int((b - a) / MAX_GAP - 1e-9)
+            fill += [round(a + (b - a) * j / (k + 1), 2) for j in range(1, k + 1)]
+    room = MAX_FRAMES - len(times)
+    if len(fill) > room:
+        fill = [fill[round(i * (len(fill) - 1) / max(room - 1, 1))] for i in range(room)] if room > 0 else []
+    return sorted(set(times + fill)), tail
+
+
+def extract_frames(path, duration, n, outdir, scenes=()):
+    """按 frame_times 抽帧，返回 [(时间, 图片路径)]。"""
+    times, tail = frame_times(duration, n, scenes)
     frames = []
-    for t in sorted(set(times)):
+    for t in times:
         out = Path(outdir) / f"frame_{t:07.2f}.jpg"
         subprocess.run([ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-ss", str(t), "-i", str(path),
                         "-frames:v", "1", "-vf", "scale='min(768,iw)':-2", "-q:v", "3", "-y", str(out)])
@@ -157,6 +216,17 @@ def extract_frames(path, duration, n, outdir):
 
 
 # ---------- Prompt ----------
+
+# B 层评测发现的判断偏差（REPORT_B §5）对应的补充规则，sample 与 panel 两种提示词共用
+JUDGING_RULES = """## 判断细则
+- 画面类维度（画面质量、视觉质量、技术规格、开场吸引力等）只依据关键帧、图片和【程序测量】打分。文字材料（审片记录、字幕、说明）里对画面的描述不能作为加分或扣分的依据；与画面不一致时写进 issues，标「待人工核实」。
+- 【程序测量】是程序算出的客观数值，优先于你对缩小图片的观感：清晰度低、模糊度高、亮度过暗或过曝，都要在对应维度如实扣分。
+- 「短静止(0.5–1秒)」只说明这段画面没有变化：字卡、落版、定格是正常设计，不算冻结帧；只有对照关键帧确认那里本该有动作（如动作中途卡住）时才算技术问题，并写进 evidence。
+- 图片和关键帧上的产品名、品牌名、包装文字、价格，以「程序识别的文字」为准，与 brief / 资产清单 / 分镜里的写法逐字比对（含形近字，如「守望」与「守旺」）；有一个字不同就是信息错误。OCR 可能把正确的字识别错，拿不准时对照图片本身，并在 evidence 中写明。
+- 极限用语与夸大承诺只管：绝对化用语（最、第一、顶级等）、保证效果或功效断言、无依据的比较和数据。普通的卖点描述、情绪化表达（如「好喝到停不下来」）不算。
+- 要理解含义才能判断的违规也要逐条检查：与品牌价值观或 brief 的调性、受众逐条对照；诱导互动（抽奖、点赞领奖）、站外引流（二维码、外部账号、联系方式）；公益提醒、安全警示等反面示范不算违规。
+- 篇幅、套话、排版不影响打分：同样的内容写得更长、加了客套话，分数不变。"""
+
 
 def build_system_prompt(stage, rubric, panel=None):
     """panel 为空时评整套标准；否则只评 panel["dimensions"]，panel["redlines"] 为真时才判红线。"""
@@ -190,6 +260,8 @@ def build_system_prompt(stage, rubric, panel=None):
 5. 你看不到视频动态和听不到声音时，基于给出的技术参数、关键帧和文本推断，并在 evidence 中注明「推断」。
 6. 不要计算总分，总分与结论由程序计算。
 7. JSON 字符串里引用原文请用「」，不要用英文双引号。
+
+{JUDGING_RULES}
 
 ## 输出格式
 只输出一个 JSON 对象，不要输出其他文字：
@@ -229,6 +301,7 @@ def build_panel_prompt(stage, rubric, panel):
 5. 看不到视频动态、听不到声音时，依据技术参数、关键帧和文本推断，并在 evidence 中注明「推断」。
 6. 参考材料里有产品原图时，凡涉及产品的判断都要拿画面与原图逐项比对（外形、颜色、包装文字、Logo、用法）。
 7. JSON 字符串里引用原文请用「」，不要用英文双引号。""")
+    parts.append(JUDGING_RULES)
     dim_ids = ", ".join(d["id"] for d in mine) or "（无，输出空数组）"
     red_rule = f"redlines 必须覆盖 R1–R{len(s['redlines'])}" if panel.get("redlines") else "redlines 输出空数组"
     parts.append(f"""## 输出格式
@@ -285,6 +358,106 @@ def image_block(path):
     return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
 
 
+_OCR = None
+_OCR_CACHE = {}  # 文件内容 sha1 → 识别结果：同一素材、同一帧在不同用例 / 多次评审里只识别一次
+OCR_THREADS = int(os.environ.get("VR_OCR_THREADS", "2"))  # 默认会占满全部核，32 核机器上反而慢 10 倍
+_OCR_LOCK = threading.Lock()  # 批量评测多线程并发：模型只加载一次
+
+
+def _load_ocr():
+    global _OCR
+    with _OCR_LOCK:
+        if _OCR is not None:
+            return _OCR
+        try:
+            import onnxruntime
+            import rapidocr_onnxruntime.utils as ocr_utils
+
+            class Opts(onnxruntime.SessionOptions):
+                def __init__(self):
+                    super().__init__()
+                    self.intra_op_num_threads = OCR_THREADS
+                    self.inter_op_num_threads = 1
+
+            ocr_utils.SessionOptions = Opts  # rapidocr 1.2.x 没有线程参数，只能替换它建会话时用的类
+            from rapidocr_onnxruntime import RapidOCR
+            _OCR = RapidOCR()
+        except ImportError:
+            _OCR = False
+    return _OCR
+
+
+def ocr_text(path, min_conf=0.5):
+    """本地 OCR 读出图上文字（rapidocr-onnxruntime）。没装时返回 None，评审照常进行，只是少一项程序证据。"""
+    if not _load_ocr():
+        return None
+    try:
+        key = hashlib.sha1(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+    if key not in _OCR_CACHE:
+        try:
+            res, _ = _OCR(str(path))
+        except Exception:
+            return None
+        _OCR_CACHE[key] = [t for _, t, c in res or [] if float(c) >= min_conf and t.strip()]
+    return list(_OCR_CACHE[key])
+
+
+def _thumb(path):
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            g = im.convert("L")
+            g.thumbnail((160, 160))
+            return g
+    except Exception:
+        return None
+
+
+def same_picture(a, b):
+    """两张缩略图几乎一样（编码噪声级别）：差值 > 24 的像素不到 0.2%。实测同一镜头相邻帧为 0，换镜、闪帧 ≥ 3%。"""
+    if a is None or b is None or a.size != b.size:
+        return False
+    from PIL import ImageChops
+    h = ImageChops.difference(a, b).histogram()
+    return sum(h[25:]) < 0.002 * sum(h)
+
+
+def frames_ocr(paths):
+    """关键帧逐帧 OCR，画面和上一张识别过的帧几乎一样时直接沿用结果。"""
+    out, last, words = [], None, None
+    for p in paths:
+        th = _thumb(p)
+        if words is None or not same_picture(th, last):
+            words, last = ocr_text(p), th
+        out.append(words)
+    return out
+
+
+def image_sharpness(path):
+    """边缘强度方差（缩到 768 内后计算）：越小越糊。合成主视觉清晰时约 1000–1900，高斯模糊后约 200–300。"""
+    try:
+        from PIL import Image, ImageFilter, ImageStat
+        with Image.open(path) as im:
+            g = im.convert("L")
+            g.thumbnail((768, 768))
+            return round(ImageStat.Stat(g.filter(ImageFilter.FIND_EDGES)).var[0])
+    except Exception:
+        return None
+
+
+def image_facts(path):
+    """附在图片标题后的程序测量：清晰度与 OCR 文字。模型核对产品名、包装文字时以 OCR 为准逐字比对。"""
+    parts = []
+    if (sh := image_sharpness(path)) is not None:
+        parts.append(f"清晰度（边缘方差，越小越糊；清晰的设计稿通常 > 800）{sh}")
+    words = ocr_text(path)
+    if words is not None:
+        parts.append("程序识别的图上文字：" + (" / ".join(words) if words else "无"))
+    return "\n【程序测量】" + "；".join(parts) if parts else ""
+
+
 def image_size(path):
     try:
         from PIL import Image
@@ -307,7 +480,8 @@ def build_user_content(files, context, transcript, frames, platform_hint, tmpdir
     for f in files:
         ext = Path(f).suffix.lower()
         if ext in IMAGE_EXT:
-            content.append({"type": "text", "text": f"\n===== 图片：{Path(f).name}（程序测量尺寸：{image_size(f)}）====="})
+            content.append({"type": "text", "text": f"\n===== 图片：{Path(f).name}（程序测量尺寸：{image_size(f)}）====="
+                            + image_facts(f)})
             content.append(image_block(f))
         elif ext in VIDEO_EXT:
             info = probe_video(f)
@@ -319,8 +493,14 @@ def build_user_content(files, context, transcript, frames, platform_hint, tmpdir
                             + f"\n【平台参考】{platform_hint}"})
             sub = Path(tmpdir) / f"v{len(techs)}"  # 每个视频单独目录，同名帧不互相覆盖
             sub.mkdir(exist_ok=True)
-            for t, img in extract_frames(f, info.get("时长(秒)", 0), frames, sub):
-                content.append({"type": "text", "text": f"关键帧 @ {t:.2f}s"})
+            shots = extract_frames(f, info.get("时长(秒)", 0), frames, sub, info.get("场景切换(秒)", ()))
+            seen = set()
+            # 关键帧上的文字（字幕、包装、落版）也 OCR；画面没变的帧沿用上一帧结果，相同的一组文字不重复列出
+            for (t, img), words in zip(shots, frames_ocr([p for _, p in shots])):
+                words = words or []
+                note = f"（程序识别的画面文字：{' / '.join(words)}）" if words and tuple(words) not in seen else ""
+                seen.add(tuple(words))
+                content.append({"type": "text", "text": f"关键帧 @ {t:.2f}s{note}"})
                 content.append(image_block(img))
         else:
             content.append(file_to_text_block(f))
@@ -389,12 +569,18 @@ def parse_output(resp):
             continue
         if isinstance(obj, dict) and isinstance(obj.get("dimensions"), list) and isinstance(obj.get("redlines"), list):
             return obj
+    if resp["choices"][0].get("finish_reason") == "length":
+        raise BadOutput(f"输出达到 max_tokens 上限（{MAX_TOKENS}，含思考）被截断：…{text[-120:]}")
     raise BadOutput(f"输出里没有包含 dimensions 和 redlines 的 JSON 对象：{text[:200]}")
+
+
+# 输出上限含思考 token：成片关 20+ 帧时思考约 4–8k、JSON 约 3k，8000 会截断
+MAX_TOKENS = 16000
 
 
 def call_model(key, model, system, content, effort, retries=3):
     import random
-    body = {"model": model, "temperature": 0.2, "max_tokens": 8000, "response_format": {"type": "json_object"},
+    body = {"model": model, "temperature": 0.2, "max_tokens": MAX_TOKENS, "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}]}
     if effort == "off":
         body["thinking"] = {"type": "disabled"}  # 关掉思考：deepseek-flash 单次从约 6 秒降到 1–2 秒
@@ -458,6 +644,8 @@ def parse_hit(v):
 # 框架文档 6.3：成片只能从关键帧和测量值推断时间维度，画面质量（V3）与声音质量（V4）的结论必须人审
 ALWAYS_HUMAN = {"video": ("V3", "V4")}
 REJECT_REVIEW = "驳回复核"  # 框架文档第 5 节：机审驳回转法务 / 品牌复核
+BORDERLINE_REVIEW = "及格线附近"
+BORDERLINE = (2.8, 3.2)  # rubrics.json 的 verdict_rules.borderline.total 可覆盖
 
 
 def aggregate(stage, rubric, runs):
@@ -481,7 +669,7 @@ def aggregate(stage, rubric, runs):
         if len(scores) < len(runs):
             bad = len([x for x in per_run if x]) - len(scores)
             flag(d["id"], f"{len(runs) - len(scores)}/{len(runs)} 次采样没有有效分数" + (f"（{bad} 次不是 1–5 的整数）" if bad else ""))
-        dims.append({**d, "scores": scores, "mean": mean,
+        dims.append({**d, "scores": scores, "mean": mean, "_exact": statistics.mean(scores) if scores else None,
                      "spread": max(scores) - min(scores) if scores else None,
                      "evidence": best.get("evidence", ""),
                      "issues": best.get("issues", []), "suggestions": best.get("suggestions", [])})
@@ -508,20 +696,27 @@ def aggregate(stage, rubric, runs):
     complete = all(d["mean"] is not None for d in dims)
     scored = [d for d in dims if d["mean"] is not None]
     # 总分始终按全部权重计算：缺失维度不能靠重新归一「藏掉」；缺维度时只出驳回或无法判定，不出通过
-    total = round(sum(d["mean"] * d["weight"] for d in scored) / sum(d["weight"] for d in dims), 2) if scored else None
+    # 判定用未取整的值：2.9967 取整成 3.0 会越过「修改后通过」门槛
+    exact = sum(d["_exact"] * d["weight"] for d in scored) / sum(d["weight"] for d in dims) if scored else None
+    low = min((d["_exact"] for d in scored), default=None)
+    total = round(exact, 2) if scored else None
     min_dim = min((d["mean"] for d in scored), default=None)
     if any(r["status"] == "命中" for r in redlines):
         verdict = "驳回（命中红线）"
     elif not complete:
         verdict = "无法判定（评审输出不完整）"
-    elif total >= rules["pass"]["min_score"] and min_dim >= rules["pass"]["min_dimension"]:
+    elif exact >= rules["pass"]["min_score"] - 1e-9 and low >= rules["pass"]["min_dimension"] - 1e-9:
         verdict = "通过"
-    elif total >= rules["revise"]["min_score"] and min_dim >= rules["revise"]["min_dimension"]:
+    elif exact >= rules["revise"]["min_score"] - 1e-9 and low >= rules["revise"]["min_dimension"] - 1e-9:
         verdict = "修改后通过"
     else:
         verdict = "驳回"
     for k in ALWAYS_HUMAN.get(stage, ()):
         flag(k, "只能从关键帧和测量值推断，结论必须人审")
+    # 及格线附近重跑容易翻转结论（B 层：翻转的用例多数总分在 2.85–3.18）
+    lo, hi = rules.get("borderline", {}).get("total", BORDERLINE)
+    if total is not None and complete and lo <= total <= hi and not verdict.startswith("驳回（命中红线）"):
+        flag(BORDERLINE_REVIEW, f"总分 {total} 在 {lo}–{hi} 之间，重新评审可能得出不同结论")
     if verdict.startswith("驳回"):
         flag(REJECT_REVIEW, "机审驳回，需法务 / 品牌复核")
 
@@ -531,6 +726,8 @@ def aggregate(stage, rubric, runs):
         got = [(m[d["id"]], d["weight"]) for d in s["dimensions"] if m.get(d["id"]) is not None]
         return sum(a * w for a, w in got) / sum(w for _, w in got) if got else None
     rep = min(runs, key=lambda r: abs(run_total(r) - total) if run_total(r) is not None and total is not None else 99) if runs else {}
+    for d in dims:
+        d.pop("_exact")
     return {"stage": s["name"], "total": total, "min_dimension": min_dim, "verdict": verdict,
             "needs_human_review": list(reasons), "review_reasons": reasons, "dimensions": dims, "redlines": redlines,
             "highlights": rep.get("highlights", []), "top_fixes": rep.get("top_fixes", []),

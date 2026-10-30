@@ -62,7 +62,9 @@ def test_image_block(tmp_path, name, mime):
     p = tmp_path / name
     Image.new("RGB", (40, 30), "red").save(p, format={"jpg": "JPEG"}.get(name.split(".")[-1].lower(), name.split(".")[-1].upper()))
     content, _ = vr.build_user_content([p], None, None, 4, "", tmp_path)
-    assert content[1]["text"].endswith(f"图片：{name}（程序测量尺寸：40x30，格式 {Image.open(p).format}）=====")
+    head, _, facts = content[1]["text"].partition("\n【程序测量】")
+    assert head.endswith(f"图片：{name}（程序测量尺寸：40x30，格式 {Image.open(p).format}）=====")
+    assert facts.startswith("清晰度（") and "程序识别的图上文字：无" in facts  # 纯色图：没有边缘、没有文字
     url = content[2]["image_url"]["url"]
     assert url.startswith(f"data:{mime};base64,") and base64.b64decode(url.split(",", 1)[1]) == p.read_bytes()
 
@@ -81,7 +83,9 @@ def test_video_content_has_tech_and_frames(tmp_path):
     assert "【程序测量的技术参数】" in head and '"分辨率": "320x180"' in head and head.endswith("【平台参考】抖音 9:16")
     labels = [c["text"] for c in content[2:] if c["type"] == "text"]
     imgs = [c for c in content[2:] if c["type"] == "image_url"]
-    assert labels == [f"关键帧 @ {t:.2f}s" for t in [0, 0.5, 1, 1.5, 2, 2.5, 3.5, 4.5, 4.9]]
+    want, _ = vr.frame_times(5, 2, tech["场景切换(秒)"])
+    assert [re.sub(r"（程序识别的画面文字：.*）$", "", x) for x in labels] == [f"关键帧 @ {t:.2f}s" for t in want]
+    assert {"模糊度", "平均亮度(0-255)", "场景切换(秒)", "短静止(0.5–1秒)"} <= tech.keys()
     assert len(imgs) == len(labels) and all(i["image_url"]["url"].startswith("data:image/jpeg;base64,") for i in imgs)
 
 

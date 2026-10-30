@@ -16,7 +16,8 @@ def test_frames_are_the_requested_frames(tmp_path):
     fps = 25
     frames = vr.extract_frames(media.frame_index_video(fps, 10), 10, 4, tmp_path)
     times = [t for t, _ in frames]
-    assert times == [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.88, 5.62, 7.38, 9.12, 9.9]
+    # 4 个段中点 3.88 / 5.62 / 7.38 / 9.12，间隔超过 1 秒的地方补在中间
+    assert times == [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.19, 3.88, 4.75, 5.62, 6.5, 7.38, 8.25, 9.12, 9.9]
     for t, p in frames:
         assert media.decode_frame_index(p) in (int(t * fps), int(t * fps) + 1), f"t={t}"
 
@@ -87,8 +88,10 @@ def test_schedule_property(duration, n):
             lo, hi, mid = 3 + seg * i, 3 + seg * (i + 1), 3 + seg * (i + 0.5)
             inside = [t for t in calls if lo - 0.006 <= t <= hi + 0.006 and abs(t - mid) <= 0.0051]
             assert inside, f"第 {i} 段 [{lo:.3f},{hi:.3f}] 中点 {mid:.3f} 处没有帧"
-        middle = [t for t in calls if t >= 3 and round(t, 9) != tail]
-        assert len(middle) <= n, "均匀段的帧数不超过 n"
+    assert len(calls) <= vr.MAX_FRAMES, "总帧数不超过上限"
+    if len(calls) < vr.MAX_FRAMES:
+        later = [t for t in calls if t >= 2.5]
+        assert all(b - a <= vr.MAX_GAP + 0.011 for a, b in zip(later, later[1:])), "没到上限时相邻帧间隔 ≤ MAX_GAP"
 
 
 def test_zero_frames_requested(tmp_path):

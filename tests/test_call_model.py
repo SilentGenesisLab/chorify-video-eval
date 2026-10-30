@@ -72,6 +72,20 @@ def test_bad_json_retried_then_succeeds(stub_llm, bad):
     assert len(stub_llm.requests) == 2 and stub_llm.sleeps == [1]
 
 
+def test_max_tokens_leaves_room_for_thinking(stub_llm):
+    # B 层：成片关 20+ 帧时思考 4–8k + JSON 约 3k，8000 会截断
+    stub_llm.push(completion(OK))
+    call()
+    assert stub_llm.requests[0]["body"]["max_tokens"] == vr.MAX_TOKENS >= 16000
+
+
+def test_truncated_output_says_length(stub_llm, capsys):
+    stub_llm.push({"choices": [{"message": {"content": '{"dimensions": [{"id": "V1", "evi'}, "finish_reason": "length"}]})
+    stub_llm.push(completion(OK))
+    assert call()[0] == OK
+    assert "max_tokens" in capsys.readouterr().err
+
+
 def test_unaccepted_param_dropped_and_retried(stub_llm):
     stub_llm.push({"error": {"message": "temperature is not supported for this model"}}, 400)
     stub_llm.push(completion(OK))

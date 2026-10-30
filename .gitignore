@@ -44,6 +44,12 @@ tests/bench/results/v2/r1/b15_*.json
 tests/bench/results/v2/r1/fails.json
 tests/bench/results/v2/r1/report.md
 tests/bench/results/v2_r1_report.md
+tests/bench/results/*/r1/b10_*.json
+tests/bench/results/*/r1/b15_*.json
+tests/bench/results/*/r1/fails.json
+tests/bench/results/*/r1/report.md
+tests/bench/results/fix_*_report.md
+tests/bench/results/fix_*_compare.md
 tests/bench/REPORT_B.md
 tests/bench/STATUS_v2.md
 tests/bench/DESIGN_v2.md
