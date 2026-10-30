@@ -60,3 +60,4 @@ benchmark/annotation/材料/
 tests/bench/results/fix_key/run_spec.json
 tests/bench/results/fix_v2/r1/metrics.json
 tests/bench/results/fix_report.md
+tests/bench/results/fix_r3/run_spec.json

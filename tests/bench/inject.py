@@ -263,9 +263,17 @@ def card_png(size, text, sub=None, bg=(20, 20, 24, 235), path=None):
     im = Image.new("RGBA", size, bg)
     d = ImageDraw.Draw(im)
     u = min(w, h)
-    d.text((w / 2, h * 0.45), text, font=font(u / 9), fill=(255, 255, 255, 255), anchor="mm")
+
+    def fit(s, size, bold):
+        # 按短边定字号，竖屏上长句会出画（OCR 只读到中间一段）：缩到宽度 90% 以内
+        f = font(size, bold)
+        while size > 12 and d.textlength(s, font=f) > w * 0.9:
+            size *= 0.92
+            f = font(size, bold)
+        return f
+    d.text((w / 2, h * 0.45), text, font=fit(text, u / 9, True), fill=(255, 255, 255, 255), anchor="mm")
     if sub:
-        d.text((w / 2, h * 0.58), sub, font=font(u / 18, False), fill=(230, 230, 230, 255), anchor="mm")
+        d.text((w / 2, h * 0.58), sub, font=fit(sub, u / 18, False), fill=(230, 230, 230, 255), anchor="mm")
     path = path or Path(tempfile.mkstemp(suffix=".png")[1])
     im.save(path)
     return Path(path)

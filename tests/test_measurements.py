@@ -200,6 +200,6 @@ def test_judging_rules_in_both_prompts(rubric, stage):
         assert vr.JUDGING_RULES in vr.build_system_prompt(stage, rubric, panel)
 
 
-@pytest.mark.parametrize("phrase", ["只依据关键帧", "逐字比对", "站外引流", "公益提醒", "篇幅", "不算冻结帧"])
+@pytest.mark.parametrize("phrase", ["只依据关键帧", "逐字比对", "站外引流", "公益提醒", "篇幅", "不算冻结帧", "不能以「可能是 OCR 误识」为由不判", "红线归属看行为性质", "在正常范围内就不要因测量值扣分"])
 def test_judging_rules_cover_report_findings(phrase):
     assert phrase in vr.JUDGING_RULES
